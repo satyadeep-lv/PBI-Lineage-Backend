@@ -1,0 +1,461 @@
+name: Backend CD
+
+on:
+  workflow_run:
+    workflows:
+      - Backend CI
+    types:
+      - completed
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pbi-lineage-backend-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and Deploy Backend
+
+    if: >-
+      vars.DEPLOYMENT_ENABLED == 'true' &&
+      (
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main'
+        ) ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main'
+        )
+      )
+
+    runs-on: windows-2025
+
+    environment:
+      name: production
+      url: https://lvpowerbilineage.com
+
+    env:
+      ACR_NAME: ${{ vars.ACR_NAME }}
+      ACR_REPOSITORY: ${{ vars.ACR_REPOSITORY }}
+
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_VM_NAME: ${{ vars.AZURE_VM_NAME }}
+
+      BACKEND_CONTAINER_NAME: ${{ vars.BACKEND_CONTAINER_NAME }}
+      BACKEND_HOST_PORT: ${{ vars.BACKEND_HOST_PORT }}
+      BACKEND_CONTAINER_PORT: ${{ vars.BACKEND_CONTAINER_PORT }}
+
+      MSOLAP_MSI_URL: ${{ vars.MSOLAP_MSI_URL }}
+
+      KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
+
+    steps:
+      # ------------------------------------------------------
+      # Resolve release
+      # ------------------------------------------------------
+
+      - name: Resolve release SHA
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_run") {
+              $sha = "${{ github.event.workflow_run.head_sha }}"
+          }
+          else {
+              $sha = "${{ github.sha }}"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($sha)) {
+              throw "Unable to resolve release SHA."
+          }
+
+          "RELEASE_SHA=$sha" | Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          Write-Host "Release SHA: $sha"
+
+      # ------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------
+
+      - name: Checkout release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # ------------------------------------------------------
+      # Validate configuration BEFORE expensive Windows build
+      # ------------------------------------------------------
+
+      - name: Validate deployment configuration
+        shell: pwsh
+        run: |
+          $required = @{
+              ACR_NAME = $env:ACR_NAME
+              ACR_REPOSITORY = $env:ACR_REPOSITORY
+              AZURE_RESOURCE_GROUP = $env:AZURE_RESOURCE_GROUP
+              AZURE_VM_NAME = $env:AZURE_VM_NAME
+              BACKEND_CONTAINER_NAME = $env:BACKEND_CONTAINER_NAME
+              BACKEND_HOST_PORT = $env:BACKEND_HOST_PORT
+              BACKEND_CONTAINER_PORT = $env:BACKEND_CONTAINER_PORT
+              MSOLAP_MSI_URL = $env:MSOLAP_MSI_URL
+              KEY_VAULT_NAME = $env:KEY_VAULT_NAME
+          }
+
+          foreach ($entry in $required.GetEnumerator()) {
+
+              if ([string]::IsNullOrWhiteSpace($entry.Value)) {
+                  throw (
+                      "Required deployment configuration " +
+                      "'$($entry.Key)' is missing."
+                  )
+              }
+
+              Write-Host "$($entry.Key): configured"
+          }
+
+          Write-Host "Deployment configuration validation passed."
+
+      # ------------------------------------------------------
+      # Azure OIDC
+      # ------------------------------------------------------
+
+      - name: Login to Azure using OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ------------------------------------------------------
+      # GitHub Windows Docker workaround
+      # ------------------------------------------------------
+
+      - name: Ensure Windows Docker daemon is ready
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Checking Docker service..."
+
+          $dockerService = Get-Service `
+              -Name docker `
+              -ErrorAction SilentlyContinue
+
+          if (-not $dockerService) {
+              throw "Docker service is not installed on this runner."
+          }
+
+          Write-Host (
+              "Initial Docker service state: " +
+              "$($dockerService.Status)"
+          )
+
+          Write-Host "Restarting Docker service..."
+
+          Restart-Service `
+              -Name docker `
+              -Force
+
+          $maxAttempts = 12
+          $ready = $false
+
+          for (
+              $attempt = 1;
+              $attempt -le $maxAttempts;
+              $attempt++
+          ) {
+
+              Write-Host (
+                  "Docker readiness attempt " +
+                  "$attempt/$maxAttempts"
+              )
+
+              docker info *> $null
+
+              if ($LASTEXITCODE -eq 0) {
+                  $ready = $true
+                  break
+              }
+
+              Start-Sleep -Seconds 5
+          }
+
+          if (-not $ready) {
+
+              Write-Host "Docker service details:"
+
+              Get-Service docker |
+                  Format-List *
+
+              throw "Docker daemon did not become ready."
+          }
+
+          docker version
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Docker version check failed."
+          }
+
+          $osType = docker info `
+              --format '{{.OSType}}'
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to determine Docker OS type."
+          }
+
+          Write-Host "Docker OS type: $osType"
+
+          if ($osType -ne "windows") {
+              throw (
+                  "Windows Docker daemon required. " +
+                  "Found '$osType'."
+              )
+          }
+
+          Write-Host "Windows Docker daemon is ready."
+
+      # ------------------------------------------------------
+      # ACR
+      # ------------------------------------------------------
+
+      - name: Resolve ACR login server
+        shell: pwsh
+        run: |
+          $loginServer = az acr show `
+              --name $env:ACR_NAME `
+              --query loginServer `
+              --output tsv
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to query Azure Container Registry."
+          }
+
+          $loginServer = (
+              $loginServer |
+                  Out-String
+          ).Trim()
+
+          if ([string]::IsNullOrWhiteSpace($loginServer)) {
+              throw "Unable to resolve ACR login server."
+          }
+
+          Write-Host "ACR login server: $loginServer"
+
+          "ACR_LOGIN_SERVER=$loginServer" | Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+      - name: Login to ACR
+        shell: pwsh
+        run: |
+          az acr login `
+              --name $env:ACR_NAME
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "ACR login failed."
+          }
+
+      # ------------------------------------------------------
+      # Image
+      # ------------------------------------------------------
+
+      - name: Calculate image name
+        shell: pwsh
+        run: |
+          $image = "{0}/{1}:{2}" -f `
+              $env:ACR_LOGIN_SERVER,
+              $env:ACR_REPOSITORY,
+              $env:RELEASE_SHA
+
+          if ([string]::IsNullOrWhiteSpace($image)) {
+              throw "Unable to calculate backend image name."
+          }
+
+          "BACKEND_IMAGE=$image" | Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          Write-Host "Backend image:"
+          Write-Host $image
+
+      - name: Build backend image
+        shell: pwsh
+        run: |
+          docker build `
+              --pull `
+              --build-arg `
+                  "MSOLAP_MSI_URL=$env:MSOLAP_MSI_URL" `
+              --tag $env:BACKEND_IMAGE `
+              .
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Backend Docker build failed."
+          }
+
+      - name: Push backend image
+        shell: pwsh
+        run: |
+          docker push $env:BACKEND_IMAGE
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Backend image push failed."
+          }
+
+      # ------------------------------------------------------
+      # Azure VM deployment
+      # ------------------------------------------------------
+
+      - name: Deploy backend to Azure VM
+        shell: pwsh
+        run: |
+          Write-Host "Starting Azure VM deployment..."
+          Write-Host "VM: $env:AZURE_VM_NAME"
+          Write-Host "Key Vault: $env:KEY_VAULT_NAME"
+
+          $output = az vm run-command invoke `
+              --resource-group $env:AZURE_RESOURCE_GROUP `
+              --name $env:AZURE_VM_NAME `
+              --command-id RunPowerShellScript `
+              --scripts "@.azure/scripts/deploy-backend.ps1" `
+              --parameters `
+                  "Image=$env:BACKEND_IMAGE" `
+                  "AcrName=$env:ACR_NAME" `
+                  "KeyVaultName=$env:KEY_VAULT_NAME" `
+                  "ContainerName=$env:BACKEND_CONTAINER_NAME" `
+                  "HostPort=$env:BACKEND_HOST_PORT" `
+                  "ContainerPort=$env:BACKEND_CONTAINER_PORT" `
+              --query "value[].message" `
+              --output tsv
+
+          $runCommandExitCode = $LASTEXITCODE
+
+          $output | Write-Host
+
+          if ($runCommandExitCode -ne 0) {
+              throw (
+                  "Azure VM Run Command failed with " +
+                  "exit code $runCommandExitCode."
+              )
+          }
+
+          $combined = (
+              $output |
+                  Out-String
+          )
+
+          if (
+              $combined -notmatch
+              "DEPLOYMENT_RESULT=SUCCESS"
+          ) {
+
+              throw (
+                  "VM deployment completed without " +
+                  "the expected success marker."
+              )
+          }
+
+          Write-Host "Azure VM deployment succeeded."
+
+      # ------------------------------------------------------
+      # Public smoke test through Cloudflare -> IIS -> FastAPI
+      # ------------------------------------------------------
+
+      - name: Public backend smoke test
+        shell: pwsh
+        run: |
+          $liveUrl = (
+              "https://lvpowerbilineage.com" +
+              "/api/v1/health/live"
+          )
+
+          $readyUrl = (
+              "https://lvpowerbilineage.com" +
+              "/api/v1/health/ready"
+          )
+
+          $passed = $false
+
+          for ($attempt = 1; $attempt -le 6; $attempt++) {
+
+              Write-Host (
+                  "Public smoke test attempt " +
+                  "$attempt/6"
+              )
+
+              try {
+
+                  $live = Invoke-WebRequest `
+                      -Uri $liveUrl `
+                      -UseBasicParsing `
+                      -TimeoutSec 30
+
+                  $ready = Invoke-WebRequest `
+                      -Uri $readyUrl `
+                      -UseBasicParsing `
+                      -TimeoutSec 30
+
+                  Write-Host (
+                      "Live status: " +
+                      $live.StatusCode
+                  )
+
+                  Write-Host (
+                      "Ready status: " +
+                      $ready.StatusCode
+                  )
+
+                  if (
+                      $live.StatusCode -eq 200 -and
+                      $ready.StatusCode -eq 200
+                  ) {
+
+                      $passed = $true
+                      break
+                  }
+              }
+              catch {
+
+                  Write-Host (
+                      "Public smoke test not ready yet."
+                  )
+              }
+
+              Start-Sleep -Seconds 5
+          }
+
+          if (-not $passed) {
+              throw "Public backend smoke test failed."
+          }
+
+          Write-Host "Public backend smoke test passed."
+
+      # ------------------------------------------------------
+      # Summary
+      # ------------------------------------------------------
+
+      - name: Deployment summary
+        shell: pwsh
+        run: |
+          Write-Host ""
+          Write-Host "========================================="
+          Write-Host "PBI Lineage Backend Deployment Successful"
+          Write-Host "========================================="
+          Write-Host "Release:"
+          Write-Host $env:RELEASE_SHA
+          Write-Host ""
+          Write-Host "Image:"
+          Write-Host $env:BACKEND_IMAGE
+          Write-Host ""
+          Write-Host "URL:"
+          Write-Host "https://lvpowerbilineage.com"

@@ -1,0 +1,59 @@
+# Git
+.git
+.github
+
+# Python
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Python package caches
+pip-cache
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Tests / coverage
+tests
+test
+.coverage
+htmlcov
+
+# IDE
+.vscode
+.idea
+
+# Secrets
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Local authentication/session/token data
+credentials
+credentials/
+tokens
+tokens/
+sessions
+sessions/
+auth-data
+auth-data/
+
+# Logs
+*.log
+logs/
+
+# Misc
+README.md
+/local_fastapi_auth_test/
+PROJECT_CONTEXT.md
+REF_DOC/
+
+# Generated ECS deployment files
+deploy/ecs/task-definition.json

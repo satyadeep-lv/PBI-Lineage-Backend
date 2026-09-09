@@ -1,0 +1,37 @@
+{
+  "family": "pbi-lineage-backend",
+  "requiresCompatibilities": [
+    "EC2"
+  ],
+  "networkMode": "awsvpc",
+  "executionRoleArn": "TASK_EXECUTION_ROLE_ARN",
+  "runtimePlatform": {
+    "operatingSystemFamily": "WINDOWS_SERVER_2025_CORE",
+    "cpuArchitecture": "X86_64"
+  },
+  "containerDefinitions": [
+    {
+      "name": "pbi-lineage-backend",
+      "image": "IMAGE_URI",
+      "essential": true,
+      "cpu": 1024,
+      "memory": 4096,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/pbi-lineage-backend",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

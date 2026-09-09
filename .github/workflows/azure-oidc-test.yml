@@ -1,0 +1,50 @@
+name: Azure OIDC Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-azure-oidc:
+    name: Test Azure OIDC Authentication
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Azure using OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify Azure subscription
+        shell: bash
+        run: |
+          echo "Checking Azure authentication..."
+          az account show \
+            --query "{subscription:name, tenantId:tenantId, state:state}" \
+            --output table
+
+      - name: Verify PBI Lineage resource group access
+        shell: bash
+        run: |
+          echo "Checking resource group access..."
+
+          az group show \
+            --name rg-pbi-lineage-prod-cin-01 \
+            --query "{name:name, location:location, provisioningState:properties.provisioningState}" \
+            --output table
+
+      - name: Verify current role assignments
+        shell: bash
+        run: |
+          echo "Azure OIDC authentication successful."

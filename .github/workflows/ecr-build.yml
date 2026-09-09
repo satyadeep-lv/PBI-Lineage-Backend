@@ -1,0 +1,297 @@
+name: Build Windows Image and Push to ECR
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: pbi-lineage-ecr-build
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: pbi-lineage-backend
+
+jobs:
+  build-and-push:
+    name: Build Windows Image
+    runs-on:
+      - self-hosted
+      - pbi-build
+      - windows-2025
+      - docker-windows
+
+    timeout-minutes: 120
+
+    steps:
+      # -------------------------------------------------------
+      # Checkout
+      # -------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------
+      # Validate build machine
+      # -------------------------------------------------------
+
+      - name: Verify Windows Docker environment
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Runner:"
+          hostname
+          whoami
+
+          Write-Host "Docker version:"
+          docker version
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Docker is not available."
+          }
+
+          $osType = docker info --format '{{.OSType}}'
+
+          Write-Host "Docker OSType: $osType"
+
+          if ($osType.Trim() -ne "windows") {
+              throw "Docker must be running in Windows container mode."
+          }
+
+          if (-not (Test-Path ".\Dockerfile")) {
+              throw "Production Dockerfile was not found."
+          }
+
+          Write-Host "Windows Docker environment verified."
+
+      # -------------------------------------------------------
+      # Validate required GitHub variable
+      # -------------------------------------------------------
+
+      - name: Validate build configuration
+        shell: powershell
+        env:
+          MSOLAP_MSI_URL: ${{ vars.MSOLAP_MSI_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MSOLAP_MSI_URL)) {
+              throw "GitHub repository variable MSOLAP_MSI_URL is missing."
+          }
+
+          Write-Host "MSOLAP build configuration is available."
+
+      # -------------------------------------------------------
+      # Authenticate GitHub → AWS using OIDC
+      # -------------------------------------------------------
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: pbi-lineage-ecr-build
+          aws-region: ${{ env.AWS_REGION }}
+
+      # -------------------------------------------------------
+      # Determine ECR registry and immutable image name
+      # -------------------------------------------------------
+
+      - name: Resolve ECR image metadata
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $accountId = aws sts get-caller-identity `
+            --query Account `
+            --output text
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to determine AWS account ID."
+          }
+
+          $registry = "${accountId}.dkr.ecr.${env:AWS_REGION}.amazonaws.com"
+          $imageTag = "${{ github.sha }}"
+          $imageUri = "${registry}/${env:ECR_REPOSITORY}:${imageTag}"
+
+          "AWS_ACCOUNT_ID=$accountId" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
+
+          "ECR_REGISTRY=$registry" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
+
+          "IMAGE_TAG=$imageTag" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
+
+          "IMAGE_URI=$imageUri" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
+
+          Write-Host "Repository : $env:ECR_REPOSITORY"
+          Write-Host "Image tag  : $imageTag"
+          Write-Host "Image URI  : $imageUri"
+
+      # -------------------------------------------------------
+      # Check whether this immutable SHA image already exists
+      # -------------------------------------------------------
+
+      - name: Check whether image already exists
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Checking ECR for image tag:"
+          Write-Host $env:IMAGE_TAG
+
+          $json = aws ecr describe-images `
+            --repository-name $env:ECR_REPOSITORY `
+            --region $env:AWS_REGION `
+            --output json
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to query Amazon ECR."
+          }
+
+          $response = $json | ConvertFrom-Json
+
+          $existingImage = $response.imageDetails |
+            Where-Object {
+              $_.imageTags -and
+              ($_.imageTags -contains $env:IMAGE_TAG)
+            } |
+            Select-Object -First 1
+
+          if ($null -ne $existingImage) {
+              Write-Host "Image already exists:"
+              Write-Host $env:IMAGE_URI
+              Write-Host "Digest: $($existingImage.imageDigest)"
+
+              "IMAGE_EXISTS=true" |
+                Out-File `
+                  -FilePath $env:GITHUB_ENV `
+                  -Append `
+                  -Encoding utf8
+          }
+          else {
+              Write-Host "No image exists for this Git commit."
+              Write-Host "The image will be built and pushed."
+
+              "IMAGE_EXISTS=false" |
+                Out-File `
+                  -FilePath $env:GITHUB_ENV `
+                  -Append `
+                  -Encoding utf8
+          }
+          
+      # -------------------------------------------------------
+      # Login Docker to private ECR
+      # -------------------------------------------------------
+
+      - name: Login Docker to Amazon ECR
+        if: env.IMAGE_EXISTS != 'true'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Verify Amazon ECR login
+        if: env.IMAGE_EXISTS != 'true'
+        shell: powershell
+        run: |
+          Write-Host "ECR registry:"
+          Write-Host $env:ECR_REGISTRY
+
+          if ([string]::IsNullOrWhiteSpace($env:ECR_REGISTRY)) {
+              throw "ECR_REGISTRY is empty."
+          }
+
+          docker info
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Docker Engine is unavailable after ECR login."
+          }
+
+          Write-Host "Amazon ECR authentication completed."
+
+      # -------------------------------------------------------
+      # Build the actual production Windows image
+      # -------------------------------------------------------
+
+      - name: Build production Windows image
+        if: env.IMAGE_EXISTS != 'true'
+        shell: powershell
+        env:
+          MSOLAP_MSI_URL: ${{ vars.MSOLAP_MSI_URL }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Building:"
+          Write-Host $env:IMAGE_URI
+
+          docker build `
+            --build-arg "MSOLAP_MSI_URL=$env:MSOLAP_MSI_URL" `
+            --tag $env:IMAGE_URI `
+            .
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Production Docker build failed."
+          }
+
+          Write-Host "Production image built successfully."
+
+      # -------------------------------------------------------
+      # Push immutable Git SHA image
+      # -------------------------------------------------------
+
+      - name: Push image to Amazon ECR
+        if: env.IMAGE_EXISTS != 'true'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          docker push $env:IMAGE_URI
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Docker push to ECR failed."
+          }
+
+          Write-Host "Image pushed successfully:"
+          Write-Host $env:IMAGE_URI
+
+      # -------------------------------------------------------
+      # Verify ECR contains the image
+      # -------------------------------------------------------
+
+      - name: Verify image in Amazon ECR
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $digest = aws ecr describe-images `
+            --repository-name $env:ECR_REPOSITORY `
+            --region $env:AWS_REGION `
+            --image-ids "imageTag=$env:IMAGE_TAG" `
+            --query "imageDetails[0].imageDigest" `
+            --output text
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to verify image in Amazon ECR."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($digest)) {
+              throw "ECR returned an empty image digest."
+          }
+
+          Write-Host "ECR image verified."
+          Write-Host "Image : $env:IMAGE_URI"
+          Write-Host "Digest: $digest"

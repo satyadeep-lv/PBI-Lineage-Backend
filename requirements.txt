@@ -1,0 +1,11 @@
+# Runtime dependencies. Transitive versions are pinned in constraints.txt.
+-c constraints.txt
+
+cryptography==50.0.1
+fastapi[standard]==0.141.1
+httpx==0.28.1
+msal==1.38.0
+pydantic-settings==2.15.0
+pywin32==312; platform_system == "Windows"
+snowflake-connector-python==4.7.2
+snowflake-snowpark-python==1.54.0

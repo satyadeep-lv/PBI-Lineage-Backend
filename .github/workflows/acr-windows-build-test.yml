@@ -1,0 +1,239 @@
+name: ACR Windows Build Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: acr-windows-build-test
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    name: Build and Push Windows Image
+    runs-on: windows-2025
+
+    environment:
+      name: production
+
+    env:
+      ACR_NAME: ${{ vars.ACR_NAME }}
+      ACR_REPOSITORY: ${{ vars.ACR_REPOSITORY }}
+      MSOLAP_MSI_URL: ${{ vars.MSOLAP_MSI_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Windows host version
+        shell: pwsh
+        run: |
+          $version = Get-ItemProperty `
+            "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+
+          Write-Host (
+            "Windows host: {0}.{1}.{2}.{3}" -f `
+              $version.CurrentMajorVersionNumber,
+              $version.CurrentMinorVersionNumber,
+              $version.CurrentBuildNumber,
+              $version.UBR
+          )
+
+      - name: Ensure Windows Docker daemon is ready
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Checking Docker service..."
+
+          $dockerService = Get-Service `
+              -Name docker `
+              -ErrorAction SilentlyContinue
+
+          if (-not $dockerService) {
+              throw "Docker service is not installed on this runner."
+          }
+
+          Write-Host "Initial Docker service state: $($dockerService.Status)"
+
+          # GitHub-hosted Windows runners currently have an intermittent
+          # Docker/HNS initialization issue. Restarting the service is the
+          # recommended workaround.
+          Write-Host "Restarting Docker service..."
+
+          Restart-Service `
+              -Name docker `
+              -Force
+
+          $maxAttempts = 12
+          $ready = $false
+
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+
+              Write-Host "Docker readiness attempt $attempt/$maxAttempts"
+
+              docker info *> $null
+
+              if ($LASTEXITCODE -eq 0) {
+                  $ready = $true
+                  break
+              }
+
+              Start-Sleep -Seconds 5
+          }
+
+          if (-not $ready) {
+              Write-Host "Docker service details:"
+              Get-Service docker | Format-List *
+
+              throw "Docker daemon did not become ready."
+          }
+
+          docker version
+
+          $osType = docker info `
+              --format '{{.OSType}}'
+
+          Write-Host "Docker OS type: $osType"
+
+          if ($osType -ne "windows") {
+              throw "Windows Docker daemon required. Found '$osType'."
+          }
+
+          Write-Host "Windows Docker daemon is ready."
+
+      - name: Login to Azure using OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve ACR login server
+        shell: pwsh
+        run: |
+          $loginServer = az acr show `
+            --name $env:ACR_NAME `
+            --query loginServer `
+            --output tsv
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to read ACR login server."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($loginServer)) {
+              throw "ACR login server is empty."
+          }
+
+          Write-Host "ACR login server: $loginServer"
+
+          "ACR_LOGIN_SERVER=$loginServer" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Encoding utf8 `
+            -Append
+
+      - name: Login to Azure Container Registry
+        shell: pwsh
+        run: |
+          az acr login --name $env:ACR_NAME
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "ACR login failed."
+          }
+
+      - name: Prepare test image tag
+        shell: pwsh
+        run: |
+          $shortSha = "${{ github.sha }}".Substring(0, 12)
+
+          $image = "{0}/{1}:build-test-{2}" -f `
+            $env:ACR_LOGIN_SERVER,
+            $env:ACR_REPOSITORY,
+            $shortSha
+
+          Write-Host "Test image: $image"
+
+          "TEST_IMAGE=$image" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Encoding utf8 `
+            -Append
+
+      - name: Pull LTSC 2025 base image
+        shell: pwsh
+        run: |
+          docker pull mcr.microsoft.com/windows/servercore:ltsc2025
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Failed to pull servercore:ltsc2025."
+          }
+
+      - name: Validate MSOLAP build configuration
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MSOLAP_MSI_URL)) {
+              throw "GitHub production variable MSOLAP_MSI_URL is missing."
+          }
+
+          Write-Host "MSOLAP build configuration is available."
+
+      - name: Build backend Windows image
+        shell: pwsh
+        run: |
+          docker build `
+            --pull `
+            --build-arg "MSOLAP_MSI_URL=$env:MSOLAP_MSI_URL" `
+            --tag $env:TEST_IMAGE `
+            .
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Backend Windows Docker build failed."
+          }
+
+      - name: Inspect built image
+        shell: pwsh
+        run: |
+          docker image inspect $env:TEST_IMAGE | Out-Null
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Built image could not be inspected."
+          }
+
+          docker images
+
+      - name: Push image to ACR
+        shell: pwsh
+        run: |
+          docker push $env:TEST_IMAGE
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Image push to ACR failed."
+          }
+
+      - name: Verify image exists in ACR
+        shell: pwsh
+        run: |
+          $shortSha = "${{ github.sha }}".Substring(0, 12)
+          $tag = "build-test-$shortSha"
+
+          $exists = az acr repository show-tags `
+            --name $env:ACR_NAME `
+            --repository $env:ACR_REPOSITORY `
+            --query "[?@=='$tag'] | [0]" `
+            --output tsv
+
+          if ($exists -ne $tag) {
+              throw "Pushed image tag was not found in ACR."
+          }
+
+          Write-Host "Verified ACR tag: $tag"
+
+      - name: Build test summary
+        shell: pwsh
+        run: |
+          Write-Host ""
+          Write-Host "Windows backend build test PASSED."
+          Write-Host "Image:"
+          Write-Host $env:TEST_IMAGE

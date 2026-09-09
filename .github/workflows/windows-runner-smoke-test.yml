@@ -1,0 +1,85 @@
+name: Test Windows Docker Runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    name: Verify Windows Docker Runner
+    runs-on:
+      - self-hosted
+      - pbi-build
+      - windows-2025
+      - docker-windows
+
+    steps:
+      - name: Show runner identity
+        shell: powershell
+        run: |
+          Write-Host "Runner machine:"
+          hostname
+
+          Write-Host "Runner service account:"
+          whoami
+
+      - name: Verify Docker service
+        shell: powershell
+        run: |
+          $service = Get-Service docker
+
+          Write-Host "Docker service status:"
+          $service | Format-Table Status, Name
+
+          if ($service.Status -ne "Running") {
+              throw "Docker service is not running."
+          }
+
+      - name: Verify Docker client and server
+        shell: powershell
+        run: |
+          docker version
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "docker version failed."
+          }
+
+      - name: Verify Windows container mode
+        shell: powershell
+        run: |
+          $osType = docker info --format '{{.OSType}}'
+
+          Write-Host "Docker OSType: $osType"
+
+          if ($osType.Trim() -ne "windows") {
+              throw "Docker is not running in Windows container mode."
+          }
+
+      - name: Verify Docker architecture
+        shell: powershell
+        run: |
+          $architecture = docker info --format '{{.Architecture}}'
+
+          Write-Host "Docker architecture: $architecture"
+
+          if ($architecture.Trim() -ne "x86_64") {
+              throw "Unexpected Docker architecture: $architecture"
+          }
+
+      - name: Run Windows Server Core 2025 container
+        shell: powershell
+        run: |
+          docker run --rm `
+            mcr.microsoft.com/windows/servercore:ltsc2025 `
+            cmd /c ver
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Windows Server Core LTSC 2025 container test failed."
+          }
+
+      - name: Runner smoke test complete
+        shell: powershell
+        run: |
+          Write-Host "Windows self-hosted Docker runner verified successfully."
