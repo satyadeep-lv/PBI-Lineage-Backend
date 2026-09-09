@@ -57,3 +57,6 @@ REF_DOC/
 
 # Generated ECS deployment files
 deploy/ecs/task-definition.json
+
+
+Docs/
