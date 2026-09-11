@@ -167,6 +167,11 @@ class GatewayService:
         ):
             raise UpstreamInvalidResponseError("powerbi")
 
+        credential_type = GatewayService._optional_text(
+            datasource,
+            "credentialType",
+        )
+
         return GatewayDatasource(
             id=returned_datasource_id,
             gateway_id=returned_gateway_id,
@@ -182,10 +187,7 @@ class GatewayService:
                 datasource,
                 "connectionDetails",
             ),
-            credential_type=GatewayService._optional_text(
-                datasource,
-                "credentialType",
-            ),
+            credential_type=credential_type,
             credential_details=(
                 GatewayDatasourceCredentialDetails(
                     use_end_user_oauth2_credentials=(use_end_user_oauth2_credentials),
@@ -193,7 +195,28 @@ class GatewayService:
                 if credential_details is not None
                 else None
             ),
+            sso_enabled=GatewayService._sso_enabled(
+                credential_type=credential_type,
+                use_end_user_oauth2_credentials=use_end_user_oauth2_credentials,
+            ),
         )
+
+    @staticmethod
+    def _sso_enabled(
+        *,
+        credential_type: str | None,
+        use_end_user_oauth2_credentials: bool | None,
+    ) -> bool | None:
+        # Microsoft Entra ID SSO passthrough is only meaningful for
+        # OAuth2-credentialed connectors (e.g. Snowflake, Azure SQL,
+        # Databricks). useEndUserOAuth2Credentials can be present (and
+        # false) on non-OAuth2 datasources too, so it must not be read as
+        # an SSO signal there. Kerberos/SAML AD-SSO is not exposed by this
+        # API and is intentionally left undetected (None).
+        if (credential_type or "").casefold() != "oauth2":
+            return None
+
+        return bool(use_end_user_oauth2_credentials)
 
     @staticmethod
     def _required_text(

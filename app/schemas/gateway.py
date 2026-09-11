@@ -34,6 +34,10 @@ class GatewayDatasource(BaseModel):
     connection_details: str | None = None
     credential_type: str | None = None
     credential_details: GatewayDatasourceCredentialDetails | None = None
+    # Detects Microsoft Entra ID SSO passthrough only (OAuth2-credentialed
+    # connectors). Kerberos/SAML AD-SSO is not observable via this API and is
+    # never reported here; None means "not applicable or unknown", not "off".
+    sso_enabled: bool | None = None
 
 
 class GatewayDatasourceListResponse(BaseModel):

@@ -323,6 +323,40 @@ Entra ID](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-r
 Fabric service-principal guidance: [identity support for Fabric REST
 APIs](https://learn.microsoft.com/en-us/rest/api/fabric/articles/identity-support).
 
+### Option C - Browser SSO (Authorization Code + PKCE)
+
+A redirect-based alternative to device code, suited to a real "Sign in"
+button in a frontend. It reuses the same delegated Power BI/Fabric
+permissions as Option A and does not need a client secret.
+
+In Microsoft Entra admin center, on the same (or a separate) application
+registration used for Option A:
+
+1. Under Authentication, add a **Web** platform redirect URI that exactly
+   matches the backend's own callback URL, for example
+   `https://api.<domain>/api/v1/auth/microsoft/sso/callback` (or
+   `http://127.0.0.1:8000/api/v1/auth/microsoft/sso/callback` for local
+   development).
+2. Keep "Allow public client flows" enabled — this flow uses PKCE, not a
+   client secret, even though the redirect URI is registered under the Web
+   platform.
+3. Keep the same delegated Power BI/Fabric permissions and workspace/gateway
+   access as Option A.
+
+Set `MICROSOFT_SSO_REDIRECT_URI` in `.env` to the exact same URL registered
+above, then restart the API. Start the flow by navigating a browser to:
+
+```text
+GET /api/v1/auth/microsoft/sso/login?tenant_id=<tenant-uuid>&client_id=<application-uuid>
+```
+
+After completing sign-in at Microsoft's login page, the browser is redirected
+back to the backend's callback, which sets the same session cookie device
+code uses and either returns the device-auth-style status JSON or redirects
+to an optional, allowlisted `post_login_redirect_uri` (its origin must appear
+in `CORS_ALLOWED_ORIGINS`). See [README.md](README.md#authentication) for the
+full parameter reference.
+
 ## 9. Configure Power BI Scanner Access
 
 Scanner service-principal authorization is separate from ordinary workspace

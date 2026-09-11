@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     xmla_tenant_name: str = "myorg"
     xmla_provider: str = "MSOLAP"
 
+    microsoft_sso_redirect_uri: str | None = None
+
     lineage_database_path: str = "data/lineage.db"
     lineage_cache_ttl_seconds: float = Field(default=30.0, ge=0.0)
     lineage_cache_max_entries: int = Field(default=128, ge=1)

@@ -193,6 +193,26 @@ class AuthenticationSessionExpiredError(AppException):
         )
 
 
+class AuthenticationStateInvalidError(AppException):
+    def __init__(self) -> None:
+        super().__init__(
+            code="AUTH_STATE_INVALID",
+            message=("The SSO login state is missing, expired, or already used."),
+            status_code=(status.HTTP_401_UNAUTHORIZED),
+        )
+
+
+class AuthenticationRedirectNotAllowedError(AppException):
+    def __init__(self) -> None:
+        super().__init__(
+            code="AUTH_REDIRECT_NOT_ALLOWED",
+            message=(
+                "The requested post-login redirect target is not an allowed origin."
+            ),
+            status_code=(status.HTTP_400_BAD_REQUEST),
+        )
+
+
 class ProviderResourceNotFoundError(AppException):
     def __init__(
         self,

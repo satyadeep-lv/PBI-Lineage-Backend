@@ -105,3 +105,75 @@ async def test_get_datasource_rejects_mismatched_provider_ids():
             datasource_id="datasource-1",
             access_token="fake-token",
         )
+
+
+@pytest.mark.asyncio
+async def test_get_datasource_marks_sso_enabled_for_oauth2_end_user_credentials():
+    service = GatewayService()
+    service.client.get_gateway_datasource = AsyncMock(
+        return_value={
+            "id": "datasource-1",
+            "gatewayId": "gateway-1",
+            "datasourceType": "Snowflake",
+            "credentialType": "OAuth2",
+            "credentialDetails": {
+                "useEndUserOAuth2Credentials": True,
+            },
+        }
+    )
+
+    result = await service.get_datasource(
+        gateway_id="gateway-1",
+        datasource_id="datasource-1",
+        access_token="fake-token",
+    )
+
+    assert result.sso_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_get_datasource_marks_sso_disabled_for_oauth2_service_credentials():
+    service = GatewayService()
+    service.client.get_gateway_datasource = AsyncMock(
+        return_value={
+            "id": "datasource-1",
+            "gatewayId": "gateway-1",
+            "datasourceType": "Snowflake",
+            "credentialType": "OAuth2",
+            "credentialDetails": {
+                "useEndUserOAuth2Credentials": False,
+            },
+        }
+    )
+
+    result = await service.get_datasource(
+        gateway_id="gateway-1",
+        datasource_id="datasource-1",
+        access_token="fake-token",
+    )
+
+    assert result.sso_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_get_datasource_leaves_sso_undetected_for_non_oauth2_credential_type():
+    service = GatewayService()
+    service.client.get_gateway_datasource = AsyncMock(
+        return_value={
+            "id": "datasource-1",
+            "gatewayId": "gateway-1",
+            "datasourceType": "Sql",
+            "credentialType": "Windows",
+            "credentialDetails": {
+                "useEndUserOAuth2Credentials": False,
+            },
+        }
+    )
+
+    result = await service.get_datasource(
+        gateway_id="gateway-1",
+        datasource_id="datasource-1",
+        access_token="fake-token",
+    )
+
+    assert result.sso_enabled is None

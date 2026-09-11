@@ -240,6 +240,7 @@ API_V1_PREFIX=/api/v1
 LOG_LEVEL=INFO
 XMLA_TENANT_NAME=myorg
 XMLA_PROVIDER=MSOLAP
+# MICROSOFT_SSO_REDIRECT_URI=
 LINEAGE_DATABASE_PATH=data/lineage.db
 LINEAGE_CACHE_TTL_SECONDS=30
 LINEAGE_CACHE_MAX_ENTRIES=128
@@ -255,6 +256,11 @@ AUTH_COOKIE_SAMESITE=lax
 MAX_REQUEST_BODY_BYTES=10485760
 EXPOSE_METRICS=true
 ```
+
+`MICROSOFT_SSO_REDIRECT_URI` is only required to enable
+`GET /auth/microsoft/sso/login`; it must exactly match a "Web" platform
+redirect URI registered on the Entra app registration (with public client
+flows still allowed, since the flow uses PKCE and no client secret).
 
 For production, set `AUTH_COOKIE_SECURE=true`, configure explicit
 `ALLOWED_HOSTS`, provide `LINEAGE_ADMIN_API_KEY`, and normally disable API docs.
@@ -295,6 +301,8 @@ POST /api/v1/auth/microsoft/device/start
 GET  /api/v1/auth/microsoft/device/status
 GET  /api/v1/auth/microsoft/device/{session_id}/status
 POST /api/v1/auth/microsoft/device/logout
+GET  /api/v1/auth/microsoft/sso/login
+GET  /api/v1/auth/microsoft/sso/callback
 POST /api/v1/auth/microsoft/service-principal/session
 GET  /api/v1/auth/microsoft/service-principal/session/status
 DELETE /api/v1/auth/microsoft/service-principal/session
@@ -312,6 +320,29 @@ Device auth status is intended to show:
 - Granted scopes.
 - Missing scopes.
 - Provider error code.
+
+`GET /microsoft/sso/login` is a browser-redirect alternative to device code:
+it starts a Microsoft Entra ID Authorization Code + PKCE flow (public client,
+no client secret) for the same delegated Power BI/Fabric scopes as device
+code, and creates an identical cookie-backed session on success (readable by
+`GET /microsoft/device/status` and closable by `POST /microsoft/device/logout`
+— `authentication_method` is simply `"sso"` instead of `"device_code"`).
+Query parameters:
+
+- `tenant_id`, `client_id` (required) — same meaning as the device-code route.
+- `post_login_redirect_uri` (optional) — where to send the browser after a
+  successful login. Its origin must exactly match one entry in
+  `CORS_ALLOWED_ORIGINS`, or the request is rejected with
+  `AUTH_REDIRECT_NOT_ALLOWED` before any redirect to Microsoft happens. When
+  omitted, `GET /microsoft/sso/callback` returns the same JSON status body as
+  `GET /microsoft/device/status` instead of redirecting.
+
+`GET /microsoft/sso/login` requires `MICROSOFT_SSO_REDIRECT_URI` to be set and
+requires the Entra app registration to have a matching "Web" platform redirect
+URI with public client flows still enabled (PKCE replaces the client secret
+for this flow). This flow only acquires delegated Power BI/Fabric resource
+tokens; it does not use an OpenID Connect id_token and does not establish any
+product-level user identity or role.
 
 The service-principal session route accepts `tenant_id`, `client_id`, and
 `client_secret`, then requests independent application tokens for these MSAL
@@ -367,6 +398,20 @@ Gateway endpoints require a Power BI token with `Dataset.Read.All` or
 Virtual network gateways are not supported by these Power BI APIs. Datasource
 responses preserve connection metadata and credential type, but never expose
 credential values.
+
+Datasource responses also include `sso_enabled`, derived from the
+provider's `credentialType`/`credentialDetails.useEndUserOAuth2Credentials`.
+It reports Microsoft Entra ID SSO passthrough for OAuth2-credentialed
+connectors only (for example Snowflake, Azure SQL, Azure Databricks): `true`
+or `false` when the datasource uses OAuth2 credentials, `null` for every
+other credential type. Kerberos and SAML AD-SSO (used by on-premises sources
+such as SQL Server, Oracle, and SAP) are not exposed by this API and are
+never reported; `null` means "not applicable or unknown," not "SSO is off."
+The same field is carried onto matched entries in
+`PhysicalSourceDiscoveryResponse.sources` (`/lineage/physical-sources/analyze`)
+when a detected Power Query source resolves to a gateway datasource. The
+Explorer endpoints do not yet expose this field; their source-database-lineage
+row is a separate, explicitly-mapped schema.
 
 ### Power BI Scanner
 
@@ -814,6 +859,9 @@ FastAPI routing layer.
 - `app/api/v1/auth.py`
   - Microsoft device auth plus protected client-secret service-principal
     session/status/logout endpoints.
+  - Browser-redirect Microsoft SSO login (Authorization Code + PKCE) and
+    callback endpoints, sharing the same session cookie and status/logout
+    routes as device auth.
   - Delegated scope diagnostics and application-token status for Power BI and
     Fabric.
 - `app/api/v1/scanner.py`
@@ -986,6 +1034,9 @@ Business logic layer. Routes call services; services call clients.
 - `gateway_service.py`
   - Maps gateway and gateway datasource list/detail metadata, validates provider
     identity, and preserves non-secret connection information.
+  - Derives `sso_enabled` (Microsoft Entra ID SSO passthrough) for
+    OAuth2-credentialed datasources; leaves it `null` for every other
+    credential type rather than guessing.
 - `semantic_model_service.py`
   - Maps Power BI datasets/semantic models.
 - `report_definition_service.py`
@@ -1022,6 +1073,8 @@ Business logic layer. Routes call services; services call clients.
   - Extracts supported Power Query/M connector calls, navigation targets,
     native SQL objects, and query-level mappings; safely reconciles gateway
     connection endpoints.
+  - Carries each gateway datasource's `sso_enabled` flag onto its own
+    gateway-derived source and onto any matched detected source.
 - `explorer_service.py`
   - Deduplicates request-scoped provider retrieval by workspace/report/model,
     applies bounded concurrency, and assembles the five UI-ready datasets.
@@ -1059,7 +1112,16 @@ Business logic layer. Routes call services; services call clients.
   - In-memory device auth session/token store.
 - `services/auth/microsoft_device_auth_service.py`
   - MSAL device-code auth, token validation, Fabric silent auth attempt, and
-    scope diagnostic population.
+    scope diagnostic population. Its Fabric silent-acquisition step is a
+    `@staticmethod` reused directly by the SSO login service below.
+- `services/auth/microsoft_sso_auth_service.py`
+  - MSAL public-client Authorization Code + PKCE auth: builds the Microsoft
+    authorize URL and code challenge, then exchanges the returned code for
+    Power BI/Fabric tokens and creates a session identical in shape to a
+    device-code session (`authentication_method="sso"`).
+- `services/auth/sso_login_store.py`
+  - Short-lived, single-use, in-memory store for a pending SSO login's PKCE
+    verifier and redirect target, keyed by the OAuth `state` value.
 - `services/auth/microsoft_service_principal_auth_service.py`
   - Uses MSAL confidential-client `/.default` token requests for Power BI and
     Fabric, stores only short-lived tokens, and reports partial Fabric auth.
@@ -1067,8 +1129,6 @@ Business logic layer. Routes call services; services call clients.
   - Power BI token validation wrapper.
 - `services/auth/fabric_auth_service.py`
   - Fabric token validation wrapper.
-- `services/auth/microsoft_auth_service.py`
-  - Commented PKCE preparation helper from earlier auth design.
 - `services/auth/snowflake_auth_service.py`
   - Optional legacy Snowflake SQL API orchestration.
 - `services/auth/snowflake_session_auth_service.py`

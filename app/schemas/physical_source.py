@@ -32,6 +32,7 @@ class PhysicalDataSource(BaseModel):
     native_query: str | None = None
     gateway_id: str | None = None
     gateway_datasource_id: str | None = None
+    sso_enabled: bool | None = None
 
 
 class QuerySourceMapping(BaseModel):

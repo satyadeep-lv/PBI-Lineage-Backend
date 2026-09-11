@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
 from app.core.auth_session import AUTH_SESSION_COOKIE
@@ -13,6 +14,9 @@ from app.services.auth.device_auth_store import (
 )
 from app.services.auth.microsoft_device_auth_service import (
     MicrosoftDeviceAuthService,
+)
+from app.services.auth.microsoft_sso_auth_service import (
+    MicrosoftSsoAuthService,
 )
 
 
@@ -290,6 +294,236 @@ def test_device_status_failed(
     finally:
         delete_device_session(session_id)
         client.cookies.clear()
+
+
+def test_sso_login_requires_redirect_uri_configuration(
+    client,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.v1.auth.get_settings",
+        lambda: SimpleNamespace(
+            microsoft_sso_redirect_uri=None,
+            cors_allowed_origins=[],
+        ),
+    )
+
+    response = client.get(
+        "/api/v1/auth/microsoft/sso/login",
+        params={
+            "tenant_id": "test-tenant",
+            "client_id": "test-client",
+        },
+    )
+
+    assert response.status_code == 501
+    assert response.json()["error"]["code"] == "PROVIDER_INTEGRATION_NOT_CONFIGURED"
+
+
+def test_sso_login_rejects_disallowed_post_login_redirect(
+    client,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.v1.auth.get_settings",
+        lambda: SimpleNamespace(
+            microsoft_sso_redirect_uri=(
+                "https://api.example.com/api/v1/auth/microsoft/sso/callback"
+            ),
+            cors_allowed_origins=["https://good.example.com"],
+        ),
+    )
+
+    response = client.get(
+        "/api/v1/auth/microsoft/sso/login",
+        params={
+            "tenant_id": "test-tenant",
+            "client_id": "test-client",
+            "post_login_redirect_uri": "https://evil.example.com/callback",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "AUTH_REDIRECT_NOT_ALLOWED"
+
+
+def test_sso_login_redirects_to_authorization_url(
+    client,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.v1.auth.get_settings",
+        lambda: SimpleNamespace(
+            microsoft_sso_redirect_uri=(
+                "https://api.example.com/api/v1/auth/microsoft/sso/callback"
+            ),
+            cors_allowed_origins=["https://good.example.com"],
+        ),
+    )
+
+    def fake_build_authorization_url(
+        self,
+        *,
+        tenant_id,
+        client_id,
+        redirect_uri,
+        post_login_redirect_uri,
+    ):
+        return (
+            "https://login.microsoftonline.com/test-tenant/oauth2/v2.0/authorize"
+            "?state=abc&code_challenge=xyz"
+        )
+
+    monkeypatch.setattr(
+        MicrosoftSsoAuthService,
+        "build_authorization_url",
+        fake_build_authorization_url,
+    )
+
+    response = client.get(
+        "/api/v1/auth/microsoft/sso/login",
+        params={
+            "tenant_id": "test-tenant",
+            "client_id": "test-client",
+            "post_login_redirect_uri": "https://good.example.com/after-login",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers["location"] == (
+        "https://login.microsoftonline.com/test-tenant/oauth2/v2.0/authorize"
+        "?state=abc&code_challenge=xyz"
+    )
+
+
+def test_sso_callback_missing_state_is_rejected(
+    client,
+):
+    client.cookies.clear()
+
+    response = client.get(
+        "/api/v1/auth/microsoft/sso/callback",
+        params={
+            "code": "some-code",
+            "state": "unknown-state",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTH_STATE_INVALID"
+
+    client.cookies.clear()
+
+
+def test_sso_callback_provider_error_is_rejected(
+    client,
+):
+    client.cookies.clear()
+
+    response = client.get(
+        "/api/v1/auth/microsoft/sso/callback",
+        params={
+            "error": "access_denied",
+            "state": "whatever",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTH_PROVIDER_FAILED"
+
+    client.cookies.clear()
+
+
+def test_sso_callback_success_sets_cookie_and_returns_status(
+    client,
+    monkeypatch,
+):
+    async def fake_complete_login(self, *, code, state):
+        session_id = str(uuid4())
+
+        session = DeviceAuthSession(
+            tenant_id="test-tenant",
+            client_id="test-client",
+            authentication_method="sso",
+            status="authenticated",
+            powerbi_connected=True,
+            fabric_connected=True,
+            powerbi_granted_scopes=_scope_permissions(POWERBI_SCOPES),
+            fabric_granted_scopes=_scope_permissions(FABRIC_SCOPES),
+        )
+
+        save_device_session(session_id, session)
+
+        return session_id, None
+
+    monkeypatch.setattr(
+        MicrosoftSsoAuthService,
+        "complete_login",
+        fake_complete_login,
+    )
+
+    client.cookies.clear()
+
+    response = client.get(
+        "/api/v1/auth/microsoft/sso/callback",
+        params={
+            "code": "good-code",
+            "state": "any-state",
+        },
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+
+    assert payload["status"] == "authenticated"
+    assert response.cookies.get(AUTH_SESSION_COOKIE) is not None
+
+    client.cookies.clear()
+
+
+def test_sso_callback_success_redirects_to_post_login_uri(
+    client,
+    monkeypatch,
+):
+    async def fake_complete_login(self, *, code, state):
+        session_id = str(uuid4())
+
+        session = DeviceAuthSession(
+            tenant_id="test-tenant",
+            client_id="test-client",
+            authentication_method="sso",
+            status="authenticated",
+            powerbi_connected=True,
+        )
+
+        save_device_session(session_id, session)
+
+        return session_id, "https://good.example.com/after-login"
+
+    monkeypatch.setattr(
+        MicrosoftSsoAuthService,
+        "complete_login",
+        fake_complete_login,
+    )
+
+    client.cookies.clear()
+
+    response = client.get(
+        "/api/v1/auth/microsoft/sso/callback",
+        params={
+            "code": "good-code",
+            "state": "any-state",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://good.example.com/after-login"
+    assert response.cookies.get(AUTH_SESSION_COOKIE) is not None
+
+    client.cookies.clear()
 
 
 def test_logout_success(

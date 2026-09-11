@@ -1,4 +1,7 @@
+from urllib.parse import urlsplit
+
 from fastapi import APIRouter, Cookie, Depends, Response
+from fastapi.responses import RedirectResponse
 
 from app.api.dependencies.security import require_lineage_api_key
 from app.core.auth_session import (
@@ -7,8 +10,11 @@ from app.core.auth_session import (
 )
 from app.core.config import get_settings
 from app.core.exceptions import (
+    AuthenticationRedirectNotAllowedError,
     AuthenticationSessionExpiredError,
     AuthenticationSessionRequiredError,
+    ProviderAuthenticationFailedError,
+    ProviderIntegrationNotConfiguredError,
 )
 from app.core.microsoft_auth import (
     FABRIC_SCOPES,
@@ -36,8 +42,23 @@ from app.services.auth.microsoft_device_auth_service import (
 from app.services.auth.microsoft_service_principal_auth_service import (
     MicrosoftServicePrincipalAuthService,
 )
+from app.services.auth.microsoft_sso_auth_service import (
+    MicrosoftSsoAuthService,
+)
+from app.services.auth.sso_login_store import pop_pending_sso_login
 
 router = APIRouter()
+
+
+def _require_allowed_redirect_origin(
+    redirect_uri: str,
+    allowed_origins: list[str],
+) -> None:
+    parsed = urlsplit(redirect_uri)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    if not parsed.scheme or not parsed.netloc or origin not in allowed_origins:
+        raise AuthenticationRedirectNotAllowedError()
 
 
 def _build_scope_access(
@@ -265,6 +286,95 @@ async def logout_microsoft_device_session(
     )
 
     return {"status": "logged_out"}
+
+
+@router.get(
+    "/microsoft/sso/login",
+)
+async def start_microsoft_sso_login(
+    tenant_id: str,
+    client_id: str,
+    post_login_redirect_uri: str | None = None,
+) -> RedirectResponse:
+    settings = get_settings()
+
+    if not settings.microsoft_sso_redirect_uri:
+        raise ProviderIntegrationNotConfiguredError(
+            "powerbi",
+            detail="MICROSOFT_SSO_REDIRECT_URI is not configured.",
+        )
+
+    if post_login_redirect_uri:
+        _require_allowed_redirect_origin(
+            post_login_redirect_uri,
+            settings.cors_allowed_origins,
+        )
+
+    authorization_url = MicrosoftSsoAuthService().build_authorization_url(
+        tenant_id=tenant_id,
+        client_id=client_id,
+        redirect_uri=settings.microsoft_sso_redirect_uri,
+        post_login_redirect_uri=post_login_redirect_uri,
+    )
+
+    return RedirectResponse(
+        url=authorization_url,
+        status_code=307,
+    )
+
+
+@router.get(
+    "/microsoft/sso/callback",
+    response_model=None,
+)
+async def complete_microsoft_sso_login(
+    response: Response,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> RedirectResponse | MicrosoftDeviceAuthStatusResponse:
+    if error or not code or not state:
+        if state:
+            pop_pending_sso_login(state)
+
+        raise ProviderAuthenticationFailedError("powerbi")
+
+    settings = get_settings()
+
+    (
+        session_id,
+        post_login_redirect_uri,
+    ) = await MicrosoftSsoAuthService().complete_login(
+        code=code,
+        state=state,
+    )
+
+    cookie_kwargs: dict[str, object] = {
+        "key": AUTH_SESSION_COOKIE,
+        "value": session_id,
+        "max_age": AUTH_SESSION_MAX_AGE_SECONDS,
+        "httponly": True,
+        "secure": settings.auth_cookie_secure,
+        "samesite": settings.auth_cookie_samesite,
+        "path": "/",
+    }
+
+    if post_login_redirect_uri:
+        redirect = RedirectResponse(
+            url=post_login_redirect_uri,
+            status_code=307,
+        )
+        redirect.set_cookie(**cookie_kwargs)
+        return redirect
+
+    response.set_cookie(**cookie_kwargs)
+
+    session = get_device_session(session_id)
+
+    if session is None:
+        raise AuthenticationSessionExpiredError()
+
+    return _build_device_status_response(session)
 
 
 @router.post(

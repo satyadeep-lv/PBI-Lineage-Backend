@@ -1,6 +1,8 @@
 import base64
 import binascii
+import hashlib
 import json
+import secrets
 from typing import Any
 
 MICROSOFT_LOGIN_BASE_URL = "https://login.microsoftonline.com"
@@ -27,6 +29,17 @@ FABRIC_SCOPES = [
 MICROSOFT_TEST_SCOPES = [
     ("https://analysis.windows.net/powerbi/api/Workspace.Read.All"),
 ]
+
+
+def generate_pkce_pair() -> tuple[str, str]:
+    """RFC 7636 code_verifier/code_challenge pair (S256)."""
+    code_verifier = secrets.token_urlsafe(64)
+
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+    return code_verifier, code_challenge
 
 
 def get_scope_permission(scope: str) -> str:

@@ -173,8 +173,8 @@ class MicrosoftDeviceAuthService:
         session.fabric_error_code = None
         session.fabric_flow.clear()
 
+    @staticmethod
     async def _try_acquire_fabric_token(
-        self,
         *,
         app: msal.PublicClientApplication,
         session: DeviceAuthSession,

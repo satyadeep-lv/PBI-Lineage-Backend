@@ -116,6 +116,50 @@ def test_gateway_details_are_sanitized_and_matched_to_query_source():
     assert "password" not in query_source.model_dump()
 
 
+def test_gateway_sso_enabled_is_matched_to_query_source():
+    model = _semantic_model('Snowflake.Databases("account.snowflakecomputing.com")')
+    gateway = GatewayDatasource(
+        id="datasource-1",
+        gateway_id="gateway-1",
+        datasource_type="Snowflake",
+        connection_details='{"server":"account.snowflakecomputing.com"}',
+        sso_enabled=True,
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(
+        model,
+        gateway_datasources=[gateway],
+    )
+
+    query_source = next(
+        source for source in result.sources if source.provider == "snowflake"
+    )
+    assert query_source.gateway_datasource_id == "datasource-1"
+    assert query_source.sso_enabled is True
+
+
+def test_gateway_only_source_carries_sso_enabled():
+    gateway = GatewayDatasource(
+        id="datasource-1",
+        gateway_id="gateway-1",
+        datasource_type="Snowflake",
+        connection_details='{"server":"account.snowflakecomputing.com"}',
+        sso_enabled=False,
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(
+        _semantic_model(""),
+        gateway_datasources=[gateway],
+    )
+
+    gateway_source = next(
+        source
+        for source in result.sources
+        if source.gateway_datasource_id == "datasource-1"
+    )
+    assert gateway_source.sso_enabled is False
+
+
 def test_invalid_gateway_connection_details_adds_warning():
     gateway = GatewayDatasource(
         id="datasource-1",

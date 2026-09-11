@@ -241,6 +241,7 @@ class PhysicalSourceDiscoveryService:
                     warehouse=details.get("warehouse"),
                     gateway_id=datasource.gateway_id,
                     gateway_datasource_id=datasource.id,
+                    sso_enabled=datasource.sso_enabled,
                 )
             )
 
@@ -296,6 +297,7 @@ class PhysicalSourceDiscoveryService:
 
                 source.gateway_id = gateway_source.gateway_id
                 source.gateway_datasource_id = gateway_source.gateway_datasource_id
+                source.sso_enabled = gateway_source.sso_enabled
                 break
 
     @staticmethod
@@ -341,6 +343,7 @@ class PhysicalSourceDiscoveryService:
         native_query: str | None = None,
         gateway_id: str | None = None,
         gateway_datasource_id: str | None = None,
+        sso_enabled: bool | None = None,
     ) -> PhysicalDataSource:
         source_id = stable_lineage_id(
             "source",
@@ -371,6 +374,7 @@ class PhysicalSourceDiscoveryService:
             native_query=native_query,
             gateway_id=gateway_id,
             gateway_datasource_id=gateway_datasource_id,
+            sso_enabled=sso_enabled,
         )
 
 
