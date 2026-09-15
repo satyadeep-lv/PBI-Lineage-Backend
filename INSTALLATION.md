@@ -329,17 +329,19 @@ A redirect-based alternative to device code, suited to a real "Sign in"
 button in a frontend. It reuses the same delegated Power BI/Fabric
 permissions as Option A and does not need a client secret.
 
-In Microsoft Entra admin center, on the same (or a separate) application
-registration used for Option A:
+This implementation uses `msal.PublicClientApplication`, PKCE, and no client
+secret. In Microsoft Entra admin center, on the same (or a separate)
+application registration used for Option A:
 
-1. Under Authentication, add a **Web** platform redirect URI that exactly
-   matches the backend's own callback URL, for example
+1. Under Authentication, add a public-client/native redirect URI under
+   **Mobile and desktop applications** that exactly matches the backend's own
+   callback URL, for example
    `https://api.<domain>/api/v1/auth/microsoft/sso/callback` (or
    `http://127.0.0.1:8000/api/v1/auth/microsoft/sso/callback` for local
    development).
-2. Keep "Allow public client flows" enabled — this flow uses PKCE, not a
-   client secret, even though the redirect URI is registered under the Web
-   platform.
+2. Keep "Allow public client flows" enabled. Do not register this callback
+   only as a **Web** redirect: that platform represents a confidential web
+   client and normally requires a client secret or certificate.
 3. Keep the same delegated Power BI/Fabric permissions and workspace/gateway
    access as Option A.
 
@@ -356,6 +358,13 @@ code uses and either returns the device-auth-style status JSON or redirects
 to an optional, allowlisted `post_login_redirect_uri` (its origin must appear
 in `CORS_ALLOWED_ORIGINS`). See [README.md](README.md#authentication) for the
 full parameter reference.
+
+The hosted redirect still requires live tenant validation. If the application
+is intentionally registered as a confidential **Web** application, change the
+backend flow to `ConfidentialClientApplication` and configure a secret or
+certificate before using that registration. Confirm the setup against
+Microsoft's [authorization-code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow)
+and [redirect URI platform configuration](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-redirect-uri).
 
 ## 9. Configure Power BI Scanner Access
 

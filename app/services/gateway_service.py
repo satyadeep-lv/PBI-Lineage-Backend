@@ -213,10 +213,12 @@ class GatewayService:
         # false) on non-OAuth2 datasources too, so it must not be read as
         # an SSO signal there. Kerberos/SAML AD-SSO is not exposed by this
         # API and is intentionally left undetected (None).
-        if (credential_type or "").casefold() != "oauth2":
+        if (
+            credential_type or ""
+        ).casefold() != "oauth2" or use_end_user_oauth2_credentials is None:
             return None
 
-        return bool(use_end_user_oauth2_credentials)
+        return use_end_user_oauth2_credentials
 
     @staticmethod
     def _required_text(

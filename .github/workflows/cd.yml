@@ -371,74 +371,125 @@ jobs:
       # Public smoke test through Cloudflare -> IIS -> FastAPI
       # ------------------------------------------------------
 
-      - name: Public backend smoke test
+      - name: Verify backend through IIS
         shell: pwsh
         run: |
-          $liveUrl = (
-              "https://lvpowerbilineage.com" +
-              "/api/v1/health/live"
+          $ErrorActionPreference = "Stop"
+
+          $remoteScript = @'
+          $ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop
+
+          try {
+              Write-Output "Testing FastAPI directly..."
+
+              $live = Invoke-RestMethod `
+                  -Uri "http://127.0.0.1:8000/api/v1/health/live" `
+                  -TimeoutSec 30
+
+              if ($live.status -ne "alive") {
+                  throw "FastAPI live health check failed."
+              }
+
+              Write-Output "FastAPI live check passed."
+
+              $ready = Invoke-RestMethod `
+                  -Uri "http://127.0.0.1:8000/api/v1/health/ready" `
+                  -TimeoutSec 30
+
+              if ($ready.status -ne "ready") {
+                  throw "FastAPI readiness check failed."
+              }
+
+              Write-Output "FastAPI readiness check passed."
+
+              Write-Output "Testing IIS -> ARR -> FastAPI..."
+
+              $headers = @{
+                  Host = "lvpowerbilineage.com"
+              }
+
+              $iisLive = Invoke-RestMethod `
+                  -Uri "http://127.0.0.1/api/v1/health/live" `
+                  -Headers $headers `
+                  -TimeoutSec 30
+
+              if ($iisLive.status -ne "alive") {
+                  throw "IIS live health check failed."
+              }
+
+              Write-Output "IIS live check passed."
+
+              $iisReady = Invoke-RestMethod `
+                  -Uri "http://127.0.0.1/api/v1/health/ready" `
+                  -Headers $headers `
+                  -TimeoutSec 30
+
+              if ($iisReady.status -ne "ready") {
+                  throw "IIS readiness check failed."
+              }
+
+              Write-Output "IIS readiness check passed."
+
+              Write-Output "BACKEND_SMOKE_TEST=SUCCESS"
+          }
+          catch {
+              Write-Error $_
+              exit 1
+          }
+          '@
+
+          # Windows PowerShell -EncodedCommand requires UTF-16LE.
+          $bytes = [System.Text.Encoding]::Unicode.GetBytes(
+              $remoteScript
           )
 
-          $readyUrl = (
-              "https://lvpowerbilineage.com" +
-              "/api/v1/health/ready"
+          $encodedScript = [Convert]::ToBase64String(
+              $bytes
           )
 
-          $passed = $false
+          $launcher = (
+              "powershell.exe " +
+              "-NoProfile " +
+              "-NonInteractive " +
+              "-EncodedCommand " +
+              $encodedScript
+          )
 
-          for ($attempt = 1; $attempt -le 6; $attempt++) {
+          Write-Host "Starting backend validation on Azure VM..."
 
-              Write-Host (
-                  "Public smoke test attempt " +
-                  "$attempt/6"
+          $output = az vm run-command invoke `
+              --resource-group $env:AZURE_RESOURCE_GROUP `
+              --name $env:AZURE_VM_NAME `
+              --command-id RunPowerShellScript `
+              --scripts $launcher `
+              --query "value[].message" `
+              --output tsv 2>&1
+
+          $runCommandExitCode = $LASTEXITCODE
+
+          $output | Write-Host
+
+          if ($runCommandExitCode -ne 0) {
+              throw (
+                  "Backend verification Run Command failed. " +
+                  "Exit code: $runCommandExitCode"
               )
-
-              try {
-
-                  $live = Invoke-WebRequest `
-                      -Uri $liveUrl `
-                      -UseBasicParsing `
-                      -TimeoutSec 30
-
-                  $ready = Invoke-WebRequest `
-                      -Uri $readyUrl `
-                      -UseBasicParsing `
-                      -TimeoutSec 30
-
-                  Write-Host (
-                      "Live status: " +
-                      $live.StatusCode
-                  )
-
-                  Write-Host (
-                      "Ready status: " +
-                      $ready.StatusCode
-                  )
-
-                  if (
-                      $live.StatusCode -eq 200 -and
-                      $ready.StatusCode -eq 200
-                  ) {
-
-                      $passed = $true
-                      break
-                  }
-              }
-              catch {
-
-                  Write-Host (
-                      "Public smoke test not ready yet."
-                  )
-              }
-
-              Start-Sleep -Seconds 5
           }
 
-          if (-not $passed) {
-              throw "Public backend smoke test failed."
+          $combinedOutput = (
+              $output |
+              Out-String
+          )
+
+          if (
+              $combinedOutput -notmatch
+              "BACKEND_SMOKE_TEST=SUCCESS"
+          ) {
+              throw "Backend smoke test did not report success."
           }
 
-          Write-Host "Public backend smoke test passed."
+          Write-Host ""
+          Write-Host "Backend deployment validation passed."
 
       # ------------------------------------------------------
       # Summary

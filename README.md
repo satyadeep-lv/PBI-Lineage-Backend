@@ -12,9 +12,9 @@ architecture.
 
 Current capabilities:
 
-- Supports Microsoft device-code authentication for interactive testing and
-  Microsoft Entra service-principal client-secret authentication for
-  unattended application sessions.
+- Supports Microsoft device-code authentication, browser Authorization Code +
+  PKCE SSO, and Microsoft Entra service-principal client-secret authentication
+  for unattended application sessions.
 - Stores short-lived in-memory auth sessions.
 - Lists Power BI workspaces.
 - Gets one Power BI workspace.
@@ -89,6 +89,8 @@ Remaining acceptance and scale work:
 
 - Improve semantic model parser coverage for more TMDL shapes.
 - Run live XMLA acceptance validation against a Power BI/Fabric capacity.
+- Validate the browser SSO callback against its public-client redirect URI in
+  the target Microsoft Entra tenant.
 - Run live Snowflake authentication and deep-lineage acceptance with a role
   permitted to call `SNOWFLAKE.CORE.GET_LINEAGE`.
 - Add production-grade auth/session storage.
@@ -258,9 +260,14 @@ EXPOSE_METRICS=true
 ```
 
 `MICROSOFT_SSO_REDIRECT_URI` is only required to enable
-`GET /auth/microsoft/sso/login`; it must exactly match a "Web" platform
-redirect URI registered on the Entra app registration (with public client
-flows still allowed, since the flow uses PKCE and no client secret).
+`GET /auth/microsoft/sso/login`; it must exactly match a public-client/native
+redirect URI registered under **Mobile and desktop applications** on the Entra
+app registration. Public client flows must be enabled because this
+implementation uses `PublicClientApplication`, PKCE, and no client secret. A
+redirect registered only under **Web** represents a confidential client and is
+not compatible with this implementation without changing it to use a secret
+or certificate. See Microsoft's [authorization-code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow)
+and [redirect URI platform configuration](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-redirect-uri).
 
 For production, set `AUTH_COOKIE_SECURE=true`, configure explicit
 `ALLOWED_HOSTS`, provide `LINEAGE_ADMIN_API_KEY`, and normally disable API docs.
@@ -326,11 +333,11 @@ it starts a Microsoft Entra ID Authorization Code + PKCE flow (public client,
 no client secret) for the same delegated Power BI/Fabric scopes as device
 code, and creates an identical cookie-backed session on success (readable by
 `GET /microsoft/device/status` and closable by `POST /microsoft/device/logout`
-— `authentication_method` is simply `"sso"` instead of `"device_code"`).
+with `authentication_method="sso"` instead of `"device_code"`).
 Query parameters:
 
-- `tenant_id`, `client_id` (required) — same meaning as the device-code route.
-- `post_login_redirect_uri` (optional) — where to send the browser after a
+- `tenant_id`, `client_id` (required): same meaning as the device-code route.
+- `post_login_redirect_uri` (optional): where to send the browser after a
   successful login. Its origin must exactly match one entry in
   `CORS_ALLOWED_ORIGINS`, or the request is rejected with
   `AUTH_REDIRECT_NOT_ALLOWED` before any redirect to Microsoft happens. When
@@ -338,11 +345,13 @@ Query parameters:
   `GET /microsoft/device/status` instead of redirecting.
 
 `GET /microsoft/sso/login` requires `MICROSOFT_SSO_REDIRECT_URI` to be set and
-requires the Entra app registration to have a matching "Web" platform redirect
-URI with public client flows still enabled (PKCE replaces the client secret
-for this flow). This flow only acquires delegated Power BI/Fabric resource
-tokens; it does not use an OpenID Connect id_token and does not establish any
-product-level user identity or role.
+requires a matching public-client/native redirect URI under **Mobile and
+desktop applications**, with public client flows enabled. This flow only
+acquires delegated Power BI/Fabric resource tokens; it does not use an OpenID
+Connect `id_token` and does not establish any product-level user identity or
+role. Pending state and PKCE verifiers are process-local, single-use, and valid
+for ten minutes, so the callback must return to the same API instance until
+shared session storage is implemented.
 
 The service-principal session route accepts `tenant_id`, `client_id`, and
 `client_secret`, then requests independent application tokens for these MSAL
@@ -403,10 +412,11 @@ Datasource responses also include `sso_enabled`, derived from the
 provider's `credentialType`/`credentialDetails.useEndUserOAuth2Credentials`.
 It reports Microsoft Entra ID SSO passthrough for OAuth2-credentialed
 connectors only (for example Snowflake, Azure SQL, Azure Databricks): `true`
-or `false` when the datasource uses OAuth2 credentials, `null` for every
-other credential type. Kerberos and SAML AD-SSO (used by on-premises sources
-such as SQL Server, Oracle, and SAP) are not exposed by this API and are
-never reported; `null` means "not applicable or unknown," not "SSO is off."
+or `false` when Microsoft returns the end-user OAuth2 flag, and `null` when
+that flag is absent or the datasource uses another credential type. Kerberos
+and SAML AD-SSO (used by on-premises sources such as SQL Server, Oracle, and
+SAP) are not exposed by this API and are never reported; `null` means "not
+applicable or unknown," not "SSO is off."
 The same field is carried onto matched entries in
 `PhysicalSourceDiscoveryResponse.sources` (`/lineage/physical-sources/analyze`)
 when a detected Power Query source resolves to a gateway datasource. The
@@ -1035,8 +1045,8 @@ Business logic layer. Routes call services; services call clients.
   - Maps gateway and gateway datasource list/detail metadata, validates provider
     identity, and preserves non-secret connection information.
   - Derives `sso_enabled` (Microsoft Entra ID SSO passthrough) for
-    OAuth2-credentialed datasources; leaves it `null` for every other
-    credential type rather than guessing.
+    OAuth2-credentialed datasources; leaves it `null` when the provider flag is
+    absent or the credential type is not OAuth2.
 - `semantic_model_service.py`
   - Maps Power BI datasets/semantic models.
 - `report_definition_service.py`
@@ -1144,7 +1154,11 @@ Automated tests.
 - `tests/conftest.py`
   - FastAPI test client fixture.
 - `tests/api/test_auth.py`
-  - Device auth route/status/logout behavior.
+  - Device auth plus browser SSO login/callback, state, redirect, cookie, and
+    provider-status behavior.
+- `tests/unit/test_microsoft_sso_auth_service.py`
+  - PKCE authorization, one-time state, token exchange, Power BI validation,
+    Fabric acquisition, and session creation.
 - `tests/api/test_microsoft_service_principal_auth.py`
   - Client-secret route, HttpOnly cookie, status, and secret-redaction behavior.
 - `tests/api/test_scanner_resources.py`
@@ -1171,7 +1185,8 @@ Automated tests.
   - App-only Power BI/Fabric acquisition, partial auth, failure handling, and
     non-persistence of the submitted client secret.
 - `tests/unit/test_gateway_service.py`
-  - Gateway and datasource mapping, including provider identity validation.
+  - Gateway/datasource mapping, provider identity validation, and tri-state
+    OAuth2 SSO passthrough detection.
 - `tests/unit/test_semantic_model_service.py`
   - Semantic model service mapping/validation.
 - `tests/unit/test_report_definition_service.py`
@@ -1268,6 +1283,7 @@ maintainer. Commit IDs and author details are intentionally omitted.
 | Aug 31, 2026 | Phase 18-20 | Completed locally | Added configurable security controls, operational readiness, and Prometheus metrics. |
 | Sep 1, 2026 | Explorer read-model integration | Completed locally | Added five focused frontend datasets, a shared snapshot API, request-scoped call deduplication, and bounded parallel retrieval. |
 | Sep 2, 2026 | Microsoft app auth and metadata scanner | Completed locally | Added protected Entra client-secret sessions plus the official four-step Power BI Admin scanner workflow with full-payload retention and summary counts. |
+| Sep 14, 2026 | Browser SSO and gateway SSO metadata | Completed locally | Added delegated Authorization Code + PKCE login, shared auth-session diagnostics, and tri-state gateway OAuth2 SSO passthrough metadata. |
 | Deferred | Phase 21 | Not started by design | PowerAI remains excluded until backend and frontend workflows are complete. |
 
 The Phase 3.6-3.14 execution labels are retained for history. Against the
@@ -1277,18 +1293,19 @@ authoritative phase view; Phase 6.0 remains only a historical execution label.
 
 ### Latest Completed Phase
 
-Phase 20 is the latest completed roadmap phase. The explorer read models and
-Microsoft app-auth/scanner integration are post-phase extensions and do not
-renumber the roadmap. They strengthen original Phase 2 authentication and
-Phase 9 estate discovery while retaining the rule that source evidence is
-preserved rather than silently overwritten.
+Phase 20 is the latest completed roadmap phase. The explorer read models,
+Microsoft app-auth/scanner integration, browser SSO, and gateway SSO metadata
+are post-phase extensions and do not renumber the roadmap. They strengthen
+original Phase 2 authentication, Phase 6 physical-source mapping, and Phase 9
+estate discovery while retaining the rule that source evidence is preserved
+rather than silently overwritten.
 
 ### Next Phase
 
 No PowerAI work starts next. The immediate work is live tenant acceptance,
-including Snowflake auth/`GET_LINEAGE`, frontend integration, broader DAX/M
-fixture coverage, and replacing in-memory auth plus single-instance SQLite/job
-coordination before horizontal scaling.
+including browser SSO, Snowflake auth/`GET_LINEAGE`, frontend integration,
+broader DAX/M fixture coverage, and replacing in-memory auth plus
+single-instance SQLite/job coordination before horizontal scaling.
 
 The Phase 3.14 implementation has a tenant-dependent acceptance check that is
 not part of local automated testing:
@@ -1302,10 +1319,12 @@ not part of local automated testing:
 
 ## Current Review Notes
 
-Phases 3.6 through 20, the explorer integration, Microsoft app authentication,
-and the Scanner API are locally verified with Ruff and pytest: 223 tests pass.
-The only known test-suite warning is a third-party FastAPI/TestClient warning
-about Starlette's `httpx` integration.
+Phases 3.6 through 20, the explorer integration, Microsoft authentication,
+gateway SSO metadata, and the Scanner API are locally verified with Ruff and
+pytest: 241 tests pass. Browser SSO is contract-tested locally but still
+requires a live Entra redirect-flow acceptance check. The only known suite
+warning is the third-party FastAPI/TestClient deprecation for Starlette's
+`httpx` integration.
 
 ## Development Notes
 

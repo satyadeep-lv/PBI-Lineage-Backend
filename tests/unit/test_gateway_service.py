@@ -156,6 +156,28 @@ async def test_get_datasource_marks_sso_disabled_for_oauth2_service_credentials(
 
 
 @pytest.mark.asyncio
+async def test_get_datasource_leaves_sso_unknown_when_oauth2_flag_is_omitted():
+    service = GatewayService()
+    service.client.get_gateway_datasource = AsyncMock(
+        return_value={
+            "id": "datasource-1",
+            "gatewayId": "gateway-1",
+            "datasourceType": "Snowflake",
+            "credentialType": "OAuth2",
+            "credentialDetails": {},
+        }
+    )
+
+    result = await service.get_datasource(
+        gateway_id="gateway-1",
+        datasource_id="datasource-1",
+        access_token="fake-token",
+    )
+
+    assert result.sso_enabled is None
+
+
+@pytest.mark.asyncio
 async def test_get_datasource_leaves_sso_undetected_for_non_oauth2_credential_type():
     service = GatewayService()
     service.client.get_gateway_datasource = AsyncMock(
