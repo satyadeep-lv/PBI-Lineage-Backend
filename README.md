@@ -84,6 +84,11 @@ Current capabilities:
   payloads or graph storage.
 - Provides configurable API-key enforcement, secure headers/cookies, trusted
   hosts, request-size limits, readiness checks, and Prometheus-format metrics.
+- Exposes an authenticated Power AI foundation (`/ai/status`, `/ai/chat`) that
+  explains evidence the lineage engine already computed; it is
+  provider-independent (OpenAI/Anthropic/Gemini/Azure OpenAI/a local fake
+  provider, switchable by configuration alone), disabled by default, and does
+  not yet call any lineage tool or agent (see "Power AI" below).
 
 Remaining acceptance and scale work:
 
@@ -100,9 +105,17 @@ Remaining acceptance and scale work:
 - Automate ECS task-definition registration and service rollout after an
   immutable Amazon ECR image is published.
 - Add production high availability, alarms, and autoscaling.
+- Power AI: wrap the deterministic lineage services as AI tools, add the
+  supervisor/agent routing layer, persona-adapted responses, conversation
+  persistence, streaming, and observability/cost metrics. Only the
+  provider-independent foundation (config, `ModelGateway`, one status/one chat
+  endpoint) exists so far; no agent, tool, or lineage-derived evidence is
+  wired into it yet.
 
-PowerAI is intentionally deferred until the backend and frontend lineage
-workflows are complete. No PowerAI endpoint or service is included in this phase.
+Power AI is being introduced in controlled phases; only its
+provider-independent foundation is included in this phase (see "Power AI"
+below). It never derives lineage facts itself — it explains facts the
+existing deterministic lineage engine already computed.
 
 ## Technology Stack
 
@@ -111,6 +124,7 @@ workflows are complete. No PowerAI endpoint or service is included in this phase
 - Pydantic / Pydantic Settings
 - httpx
 - MSAL
+- LiteLLM (provider-neutral LLM adapter for Power AI)
 - Snowflake Connector for Python
 - Snowpark Python
 - cryptography for in-memory RSA key loading
@@ -257,6 +271,13 @@ AUTH_COOKIE_SECURE=false
 AUTH_COOKIE_SAMESITE=lax
 MAX_REQUEST_BODY_BYTES=10485760
 EXPOSE_METRICS=true
+AI_ENABLED=false
+AI_PROVIDER=fake
+AI_MODEL=fake-model
+AI_TEMPERATURE=0.1
+AI_MAX_TOKENS=4000
+AI_REQUEST_TIMEOUT_SECONDS=30
+AI_STREAMING_ENABLED=true
 ```
 
 `MICROSOFT_SSO_REDIRECT_URI` is only required to enable
@@ -287,6 +308,22 @@ Analysis Services OLE DB Provider (`MSOLAP`) installed. The backend opens an
 DB connection string. The production Dockerfile supplies and verifies these
 Windows dependencies in a Windows Server Core LTSC 2025 container. Live XMLA
 still needs a Power BI/Fabric capacity with XMLA enabled and a permitted user.
+
+Power AI (`AI_*`) is disabled by default (`AI_ENABLED=false`) and defaults to
+the network-free `fake` provider even when enabled, so existing deployments
+are unaffected unless explicitly configured. Set `AI_PROVIDER` to `openai`,
+`anthropic`, `gemini`, or `azure_openai` and provide only that provider's
+credential (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or
+`AZURE_OPENAI_API_KEY`); `AI_API_BASE`/`AI_API_VERSION` are for Azure
+OpenAI/Ollama-style custom endpoints. Provider switching never requires
+rewriting agents, tools, endpoints, or evidence schemas — only these
+settings change. The first request to a real (non-`fake`) provider on a
+fresh host may require one-time outbound HTTPS access to
+`openaipublic.blob.core.windows.net` for LiteLLM's bundled tokenizer data;
+this is unrelated to chat completions themselves (token usage is read from
+each provider's own API response) and is normally satisfied once during
+image build, not at request time. See "Power AI" below for the current
+scope.
 
 ## API Overview
 
@@ -811,10 +848,53 @@ hierarchies, hierarchy levels, partitions, and relationships by normalized
 identity and reports `matched`, `definition_only`, or `xmla_only`. TMDL source
 paths remain the definition evidence; XMLA provides runtime metadata.
 
+### Power AI
+
+```text
+GET  /api/v1/ai/status
+POST /api/v1/ai/chat
+```
+
+Power AI explains lineage evidence the deterministic engine above already
+computed; it never derives lineage, DAX, sources, or impact chains itself.
+Both routes require the same authenticated Power BI session as every other
+route (`get_powerbi_access_token`) plus `X-Lineage-Admin-Key` when
+`LINEAGE_ADMIN_API_KEY` is configured (the same admin-key convention used by
+the Scanner and Snowflake auth routers).
+
+`GET /ai/status` reports `enabled`, `provider`, `model`, `streaming_enabled`,
+and `configured` (whether a credential is present for the selected
+provider) — never the credential itself.
+
+`POST /ai/chat` currently accepts `message` (required), plus
+`conversation_id`, `audience` (`general`/`business`/`developer`), and a
+`context` object (`workspace_id`, `report_id`, `semantic_model_id`,
+`page_id`, `object_type`, `object_id`, `object_name`) that is validated for
+shape but not yet used. It calls the configured `ModelGateway` directly with
+a persona-neutral system prompt and returns `{conversation_id, answer,
+agent, evidence, suggested_questions, usage}`. `agent` is always `null` and
+`evidence`/`suggested_questions` are always empty in this phase — the
+response shape is intentionally final so later phases (tool-backed agents,
+personas, conversation persistence, streaming) do not require a breaking
+API change. Returns `503 AI_DISABLED` when `AI_ENABLED=false`.
+
+Provider switching (OpenAI/Anthropic/Gemini/Azure OpenAI/a local `fake`
+provider) is a `AI_PROVIDER`/`AI_MODEL`/credential configuration change only;
+no endpoint, schema, or code path differs by provider. Every provider except
+`fake` is reached through one adapter (`LiteLLMModelGateway`); no vendor SDK
+is imported outside that one file, and LiteLLM itself is imported lazily
+(only when a real provider is actually used) so the application's startup,
+`/ai/status`, and the default `fake` provider never depend on it being
+importable.
+
 ## Folder Structure
 
 ```text
 app/
+  ai/
+    models/
+    providers/
+    services/
   api/
   clients/
   core/
@@ -894,6 +974,10 @@ FastAPI routing layer.
   - Unified DAX, physical-source, Snowflake normalization, supplied-evidence
     and live graph, deep Snowflake table/column tracing, impact, search,
     navigation, versioning, validation, estate, and scan-job endpoints.
+- `app/api/v1/ai.py`
+  - Power AI status and chat endpoints. Router-level lineage-admin-key gate
+    plus per-route authenticated Power BI session, matching every other
+    subsystem's auth conventions.
 - `app/api/dependencies/credentials.py`
   - FastAPI dependencies for extracting Power BI/Fabric credentials and the
     Snowflake connector-session ID from their separate HttpOnly cookies.
@@ -901,6 +985,40 @@ FastAPI routing layer.
   - Singleton lineage repository, cache/store, and scan-manager dependencies.
 - `app/api/dependencies/security.py`
   - Optional constant-time lineage administration API-key enforcement.
+
+### `app/ai`
+
+Power AI — currently the provider-independent foundation only (no agents,
+tools, or lineage-derived evidence yet). Depends only on `app/core` and its
+own `ModelGateway` abstraction; never imports a vendor SDK outside
+`providers/litellm_gateway.py`, and never duplicates lineage logic that
+already lives in `app/services`.
+
+- `app/ai/models/enums.py`
+  - `AudienceType` (general/business/developer) and `MessageRole`.
+- `app/ai/models/messages.py`, `requests.py`, `responses.py`
+  - Provider-neutral `ModelMessage`/`ModelRequest`/`ModelResponse`/
+    `ModelChunk`/`TokenUsage` used by every `ModelGateway` implementation,
+    plus the public `AIChatRequest`/`AIChatContext`/`AIChatResponse`/
+    `AIStatusResponse`/`AIUsage` API contracts.
+- `app/ai/providers/base.py`
+  - The `ModelGateway` `Protocol` (`generate`/`stream`) that agents and
+    services depend on instead of any vendor SDK.
+- `app/ai/providers/fake_gateway.py`
+  - Deterministic, network-free `ModelGateway` selected by `AI_PROVIDER=fake`
+    (the default); keeps an unconfigured deployment fully functional and
+    testable.
+- `app/ai/providers/litellm_gateway.py`
+  - `ModelGateway` backed by LiteLLM's unified `acompletion()`/streaming API;
+    maps `litellm.exceptions.*` to normalized `AI*` application exceptions.
+    Imports `litellm` lazily inside its methods rather than at module load,
+    so application startup and every other AI provider never depend on it.
+- `app/ai/providers/factory.py`
+  - Builds the configured gateway from `Settings` and reports (without ever
+    returning it) whether a credential is present for the selected provider.
+- `app/ai/services/ai_service.py`
+  - Thin orchestration: enforces `AI_ENABLED`, builds the model request,
+    calls the gateway, emits structured logs, maps to the API response.
 
 ### `app/clients`
 
@@ -1241,6 +1359,19 @@ Automated tests.
     focused route selection, authentication dependencies, and validation.
 - `tests/unit/test_security_operations.py`
   - Security headers, API-key enforcement, body limits, readiness, and metrics.
+- `tests/unit/test_ai_fake_gateway.py`
+  - `FakeModelGateway` deterministic generate/stream behavior.
+- `tests/unit/test_ai_model_gateway.py`
+  - `LiteLLMModelGateway` request mapping, response/streaming normalization,
+    and provider-error-to-application-exception mapping. Skips cleanly
+    (without failing collection for the rest of the suite) if `litellm`
+    cannot be imported in the current environment.
+- `tests/unit/test_ai_service.py`
+  - `AI_ENABLED` gating, successful generate path, gateway error propagation,
+    and status reporting without secret exposure.
+- `tests/api/test_ai_resources.py`
+  - `/ai/status` and `/ai/chat` authentication, `AI_DISABLED` handling, and
+    the forward-compatible response shape.
 
 ## Phase History
 

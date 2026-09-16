@@ -27,6 +27,10 @@ _ALLOWED_EXTRA_FIELDS = {
     "duration_ms",
     "provider",
     "error_code",
+    "model",
+    "tokens",
+    "agent",
+    "conversation_id",
 }
 
 

@@ -514,11 +514,23 @@ Allow outbound TCP 443 as required for the selected capabilities:
 | Power BI REST and XMLA | `api.powerbi.com` |
 | Fabric REST | `api.fabric.microsoft.com` |
 | Snowflake | The account's approved `*.snowflakecomputing.com` endpoints |
+| Power AI provider (only if `AI_ENABLED=true` and `AI_PROVIDER` is not `fake`) | The selected provider's API host (for example `api.openai.com`, `api.anthropic.com`, or the configured Azure OpenAI endpoint) |
+| Power AI first-run tokenizer fetch (one-time, only for a real, non-`fake` provider) | `openaipublic.blob.core.windows.net` |
 
 Corporate TLS inspection or an outbound proxy can require organization-issued
 root certificates and standard proxy environment variables. Do not disable TLS
 verification to work around certificate failures. Accurate system time is also
 required for OAuth, TLS, cookies, and token expiration.
+
+The Power AI tokenizer fetch is LiteLLM's own one-time download of a bundled
+tokenizer file; it is unrelated to actual chat completions (token usage in
+API responses comes from each provider directly) and is normally satisfied
+once during image build rather than at request time. If this host is
+unreachable or fails TLS verification (for example behind strict corporate
+TLS inspection), only the first real (non-`fake`) AI request is affected —
+application startup, `/ai/status`, and `AI_PROVIDER=fake` are unaffected
+either way, since LiteLLM is only imported when a real provider is actually
+used.
 
 For local use, allow inbound TCP 8000 only from the intended machine/network.
 Binding to `127.0.0.1` requires no remote inbound access.
@@ -545,6 +557,10 @@ Binding to `127.0.0.1` requires no remote inbound access.
   verified if Snowflake enrichment is required.
 - Only one API worker is configured until process-local state is moved to shared
   infrastructure.
+- If Power AI is enabled, `AI_PROVIDER` and its matching credential
+  (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`GEMINI_API_KEY`/`AZURE_OPENAI_API_KEY`)
+  are set consistently, or `AI_PROVIDER=fake`/`AI_ENABLED=false` is used
+  instead.
 
 ## 15. Common Setup Failures
 
@@ -562,6 +578,8 @@ Binding to `127.0.0.1` requires no remote inbound access.
 | XMLA provider loads but the request fails | Check capacity XMLA mode, workspace/model names, tenant path, Build/read permission, and token identity |
 | Snowflake external browser opens on the wrong computer | It opens on the backend host; use OAuth/RSA for remote hosting |
 | Browser calls lose authentication cookies | Use exact CORS origins, enable frontend credentials, and align HTTPS, Secure, and SameSite cookie settings |
+| First real (non-`fake`) AI request fails with an SSL/certificate error reaching `openaipublic.blob.core.windows.net` | Corporate TLS inspection/proxy trust issue reaching LiteLLM's one-time tokenizer fetch, unrelated to the AI provider itself; resolve certificate trust per the network section above, or pre-warm the fetch during image build |
+| `POST /ai/chat` returns `503 AI_DISABLED` | Set `AI_ENABLED=true` and restart the API |
 
 For AWS/Azure deployment, CI/CD, startup/shutdown, and recovery procedures, use
 the deployment documents under `REF_DOC` after completing this local baseline.

@@ -43,6 +43,27 @@ class Settings(BaseSettings):
     lineage_admin_api_key: SecretStr | None = None
     expose_metrics: bool = True
 
+    ai_enabled: bool = False
+    ai_provider: Literal[
+        "openai",
+        "anthropic",
+        "gemini",
+        "azure_openai",
+        "fake",
+    ] = "fake"
+    ai_model: str = "fake-model"
+    ai_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+    ai_max_tokens: int = Field(default=4000, ge=1)
+    ai_request_timeout_seconds: float = Field(default=30.0, gt=0.0)
+    ai_streaming_enabled: bool = True
+
+    openai_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    gemini_api_key: SecretStr | None = None
+    azure_openai_api_key: SecretStr | None = None
+    ai_api_base: str | None = None
+    ai_api_version: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

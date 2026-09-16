@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    ai,
     auth,
     explorer,
     gateways,
@@ -66,4 +67,10 @@ api_router.include_router(
     lineage.router,
     prefix="/lineage",
     tags=["Lineage"],
+)
+
+api_router.include_router(
+    ai.router,
+    prefix="/ai",
+    tags=["AI"],
 )

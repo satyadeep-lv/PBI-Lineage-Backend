@@ -213,6 +213,13 @@ $env:ENABLE_API_DOCS = "false"
 $env:AUTH_COOKIE_SECURE = "true"
 $env:AUTH_COOKIE_SAMESITE = "lax"
 
+# Power AI: enabled with the network-free fake provider so the frontend's
+# AI panel is functional end-to-end. Switch AI_PROVIDER to a real provider
+# (and add its API key via Key Vault, mirroring LINEAGE_ADMIN_API_KEY below)
+# once a real provider is ready to be wired in.
+$env:AI_ENABLED = "true"
+$env:AI_PROVIDER = "fake"
+
 # ============================================================
 # Ensure Docker daemon is running
 # ============================================================
@@ -399,6 +406,8 @@ function Start-BackendContainer {
         --env AUTH_COOKIE_SECURE `
         --env AUTH_COOKIE_SAMESITE `
         --env LINEAGE_ADMIN_API_KEY `
+        --env AI_ENABLED `
+        --env AI_PROVIDER `
         $TargetImage
 
     $RunExitCode = $LASTEXITCODE

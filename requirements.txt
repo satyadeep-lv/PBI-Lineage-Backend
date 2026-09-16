@@ -4,6 +4,7 @@
 cryptography==50.0.1
 fastapi[standard]==0.141.1
 httpx==0.28.1
+litellm==1.101.0
 msal==1.38.0
 pydantic-settings==2.15.0
 pywin32==312; platform_system == "Windows"

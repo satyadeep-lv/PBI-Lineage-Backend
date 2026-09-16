@@ -274,3 +274,72 @@ class LineageApiKeyInvalidError(AppException):
             message="The lineage administration API key is invalid.",
             status_code=status.HTTP_403_FORBIDDEN,
         )
+
+
+class AIDisabledError(AppException):
+    def __init__(self) -> None:
+        super().__init__(
+            code="AI_DISABLED",
+            message="The AI subsystem is disabled.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+
+class AIProviderUnavailableError(AppException):
+    def __init__(self, detail: str | None = None) -> None:
+        message = "The AI provider is currently unavailable."
+        if detail:
+            message = f"{message} {detail}"
+        super().__init__(
+            code="AI_PROVIDER_UNAVAILABLE",
+            message=message,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            provider="ai",
+        )
+
+
+class AIProviderTimeoutError(AppException):
+    def __init__(self) -> None:
+        super().__init__(
+            code="AI_PROVIDER_TIMEOUT",
+            message="The AI provider did not respond within the allowed time.",
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            provider="ai",
+        )
+
+
+class AIProviderRateLimitedError(AppException):
+    def __init__(self, retry_after: str | None = None) -> None:
+        super().__init__(
+            code="AI_PROVIDER_RATE_LIMITED",
+            message="The AI provider is currently rate limiting requests.",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            provider="ai",
+            retry_after=retry_after,
+        )
+
+
+class AIProviderAuthenticationError(AppException):
+    def __init__(self) -> None:
+        super().__init__(
+            code="AI_PROVIDER_AUTH_FAILED",
+            message=(
+                "The configured AI provider credential was rejected. "
+                "Verify the provider API key/endpoint configuration."
+            ),
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            provider="ai",
+        )
+
+
+class AIProviderError(AppException):
+    def __init__(self, detail: str | None = None) -> None:
+        message = "The AI provider request could not be completed."
+        if detail:
+            message = f"{message} {detail}"
+        super().__init__(
+            code="AI_PROVIDER_ERROR",
+            message=message,
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            provider="ai",
+        )
