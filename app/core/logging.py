@@ -31,6 +31,11 @@ _ALLOWED_EXTRA_FIELDS = {
     "tokens",
     "agent",
     "conversation_id",
+    "intent",
+    "evidence_count",
+    "evidence_status",
+    "validation_result",
+    "fallback_used",
 }
 
 

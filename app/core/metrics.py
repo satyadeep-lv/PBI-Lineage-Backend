@@ -5,6 +5,16 @@ from time import monotonic, perf_counter
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+_GROUNDING_COUNTER_NAMES = (
+    "ai_requests_total",
+    "ai_grounded_answers_total",
+    "ai_insufficient_evidence_total",
+    "ai_conflicting_evidence_total",
+    "ai_grounding_validation_failed_total",
+    "ai_deterministic_fallback_total",
+    "ai_provider_failure_total",
+)
+
 
 class MetricsRegistry:
     def __init__(self) -> None:
@@ -14,6 +24,18 @@ class MetricsRegistry:
         self._duration_sums: dict[tuple[str, str], float] = defaultdict(float)
         self._duration_counts: dict[tuple[str, str], int] = defaultdict(int)
         self._in_progress = 0
+        self._grounding_counts: dict[str, int] = defaultdict(int)
+
+    def record_grounding_event(self, name: str) -> None:
+        """Increment one of the fixed, known Power AI grounding counters.
+
+        Unknown names are ignored rather than creating unbounded label
+        cardinality, matching this registry's existing low-cardinality design.
+        """
+        if name not in _GROUNDING_COUNTER_NAMES:
+            return
+        with self._lock:
+            self._grounding_counts[name] += 1
 
     def request_started(self) -> None:
         with self._lock:
@@ -76,12 +98,23 @@ class MetricsRegistry:
                 "# HELP pbi_lineage_process_uptime_seconds Process uptime.",
                 "# TYPE pbi_lineage_process_uptime_seconds gauge",
                 (
-                    "pbi_lineage_process_uptime_seconds"
-                    "{monotonic() - self.started_at:.3f}"
+                    "pbi_lineage_process_uptime_seconds "
+                    f"{monotonic() - self.started_at:.3f}"
                 ),
             ]
         )
+        lines.extend(self._render_grounding_counters())
         return "\n".join(lines) + "\n"
+
+    def _render_grounding_counters(self) -> list[str]:
+        with self._lock:
+            counts = dict(self._grounding_counts)
+        lines: list[str] = []
+        for name in _GROUNDING_COUNTER_NAMES:
+            lines.append(f"# HELP {name} Power AI grounding outcome counter.")
+            lines.append(f"# TYPE {name} counter")
+            lines.append(f"{name} {counts.get(name, 0)}")
+        return lines
 
 
 metrics_registry = MetricsRegistry()

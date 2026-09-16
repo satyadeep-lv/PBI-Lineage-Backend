@@ -1,5 +1,8 @@
 from pydantic import BaseModel, Field
 
+from app.ai.models.enums import AIAnswerStatus
+from app.ai.models.evidence import EvidenceItem, GroundedClaim
+
 
 class TokenUsage(BaseModel):
     prompt_tokens: int = 0
@@ -40,9 +43,17 @@ class AIUsage(BaseModel):
 
 
 class AIChatResponse(BaseModel):
-    conversation_id: str | None = None
+    conversation_id: str
+
+    status: AIAnswerStatus
+
     answer: str
+
+    claims: list[GroundedClaim] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+
     agent: str | None = None
-    evidence: list[dict] = Field(default_factory=list)
     suggested_questions: list[str] = Field(default_factory=list)
-    usage: AIUsage
+
+    # None when the model was never called (e.g. insufficient_evidence).
+    usage: AIUsage | None = None

@@ -91,6 +91,25 @@ async def get_fabric_access_token(
     return token
 
 
+async def get_optional_fabric_access_token(
+    session_id: str | None = Cookie(
+        default=None,
+        alias=AUTH_SESSION_COOKIE,
+    ),
+) -> str | None:
+    """Fabric token if the session has one, else None (never raises).
+
+    Used where Fabric access materially improves what can be answered but
+    a missing/partial Fabric session should degrade gracefully rather than
+    reject the whole request (e.g. Power AI, which can still say
+    "insufficient evidence" instead of a hard 401).
+    """
+    if not session_id:
+        return None
+
+    return get_fabric_token(session_id)
+
+
 async def get_snowflake_session_id(
     session_id: str | None = Cookie(
         default=None,

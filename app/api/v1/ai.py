@@ -1,9 +1,14 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 
 from app.ai.models.requests import AIChatRequest
 from app.ai.models.responses import AIChatResponse, AIStatusResponse
 from app.ai.services.ai_service import AIService
-from app.api.dependencies.credentials import get_powerbi_access_token
+from app.ai.services.streaming import stream_chat_response
+from app.api.dependencies.credentials import (
+    get_optional_fabric_access_token,
+    get_powerbi_access_token,
+)
 from app.api.dependencies.security import require_lineage_api_key
 from app.core.config import get_settings
 
@@ -22,9 +27,34 @@ async def get_ai_status() -> AIStatusResponse:
 @router.post(
     "/chat",
     response_model=AIChatResponse,
-    dependencies=[Depends(get_powerbi_access_token)],
 )
 async def post_ai_chat(
     request: AIChatRequest,
+    powerbi_access_token: str = Depends(get_powerbi_access_token),
+    fabric_access_token: str | None = Depends(get_optional_fabric_access_token),
 ) -> AIChatResponse:
-    return await AIService(settings=get_settings()).generate(request)
+    service = AIService(
+        settings=get_settings(),
+        powerbi_access_token=powerbi_access_token,
+        fabric_access_token=fabric_access_token,
+    )
+    return await service.generate(request)
+
+
+@router.post(
+    "/chat/stream",
+)
+async def post_ai_chat_stream(
+    request: AIChatRequest,
+    powerbi_access_token: str = Depends(get_powerbi_access_token),
+    fabric_access_token: str | None = Depends(get_optional_fabric_access_token),
+) -> StreamingResponse:
+    service = AIService(
+        settings=get_settings(),
+        powerbi_access_token=powerbi_access_token,
+        fabric_access_token=fabric_access_token,
+    )
+    return StreamingResponse(
+        stream_chat_response(service, request),
+        media_type="text/event-stream",
+    )
