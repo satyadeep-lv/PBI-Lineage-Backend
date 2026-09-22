@@ -24,3 +24,17 @@ class WorkspaceListResponse(BaseModel):
     skip: int = Field(
         ge=0,
     )
+
+from pydantic import BaseModel
+
+class WorkspaceUser(BaseModel):
+    identifier: str
+    principal_type: str | None = None
+    email_address: str | None = None
+    display_name: str | None = None
+    group_user_access_right: str | None = None
+
+class WorkspaceUserListResponse(BaseModel):
+    workspace_id: str
+    users: list[WorkspaceUser]
+    count: int

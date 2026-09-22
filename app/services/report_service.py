@@ -5,6 +5,8 @@ from app.core.exceptions import UpstreamInvalidResponseError
 from app.schemas.report import (
     Report,
     ReportListResponse,
+    ReportUserListResponse,
+    ReportUser
 )
 from app.schemas.report_page import (
     ReportPage,
@@ -15,6 +17,44 @@ from app.schemas.report_page import (
 class ReportService:
     def __init__(self) -> None:
         self.client = PowerBIClient()
+
+    async def get_report_users(
+        self,
+        *,
+        report_id: str,
+        workspace_id: str | None = None,
+        access_token: str,
+    ) -> ReportUserListResponse:
+        
+        raw_users = None
+
+        # 1. Try the workspace endpoint first if we have a workspace_id
+        if workspace_id:
+            try:
+                raw_users = await self.client.get_report_users_in_workspace(
+                    workspace_id=workspace_id,
+                    report_id=report_id,
+                    access_token=access_token,
+                )
+            except Exception:
+                # If provider_get raises an error (like 404 FeatureNotAvailable),
+                # we catch it and do nothing, allowing it to fall through to the admin endpoint.
+                raw_users = None
+
+        # 2. Fallback to admin endpoint if workspace_id was missing OR the workspace call failed
+        if raw_users is None:
+            raw_users = await self.client.get_report_users_as_admin(
+                report_id=report_id,
+                access_token=access_token,
+            )
+
+        users = [self._map_report_user(user) for user in raw_users]
+
+        return ReportUserListResponse(
+            report_id=report_id,
+            users=users,
+            count=len(users),
+        )
 
     async def list_reports(
         self,
@@ -160,4 +200,20 @@ class ReportService:
             name=page_name,
             display_name=display_name,
             order=order,
+        )
+    @staticmethod
+    def _map_report_user(
+        user: dict[str, Any],
+    ) -> ReportUser:
+        identifier = user.get("identifier")
+
+        if not isinstance(identifier, str) or not identifier:
+            raise UpstreamInvalidResponseError("powerbi")
+
+        return ReportUser(
+            identifier=identifier,
+            principal_type=user.get("principalType"),
+            email_address=user.get("emailAddress"),
+            display_name=user.get("displayName"),
+            user_right=user.get("reportUserAccessRight") or user.get("userRight"),
         )

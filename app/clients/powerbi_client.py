@@ -318,3 +318,60 @@ class PowerBIClient:
         )
 
         return self._parse_object_response(response)
+
+    async def get_report_users_in_workspace(
+        self,
+        *,
+        workspace_id: str,
+        report_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/groups/{workspace_id}/reports/{report_id}/users",
+            access_token=access_token,
+        )
+        return self._parse_list_response(response)
+
+    async def get_report_users_as_admin(
+        self,
+        *,
+        report_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/admin/reports/{report_id}/users",
+            access_token=access_token,
+        )
+        return self._parse_list_response(response)
+
+    # ==========================================
+    # Methods for the Workspaces endpoints we added
+    # ==========================================
+
+    async def get_workspace_users(
+        self,
+        *,
+        workspace_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/groups/{workspace_id}/users",
+            access_token=access_token,
+        )
+        return self._parse_list_response(response)
+
+    async def get_dashboards_in_workspace(
+        self,
+        *,
+        workspace_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/groups/{workspace_id}/dashboards",
+            access_token=access_token,
+        )
+        return self._parse_list_response(response)

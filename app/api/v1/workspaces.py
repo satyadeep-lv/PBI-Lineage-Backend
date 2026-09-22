@@ -15,6 +15,10 @@ from app.api.dependencies.credentials import (
 from app.schemas.normalized_report_definition import (
     NormalizedReportDefinitionResponse,
 )
+from app.schemas.dashboard import (
+    DashboardListResponse,
+    Dashboard
+)
 from app.schemas.parsed_semantic_model import (
     ParsedSemanticModelResponse,
 )
@@ -44,6 +48,8 @@ from app.schemas.semantic_model_metadata import (
 from app.schemas.workspace import (
     Workspace,
     WorkspaceListResponse,
+    WorkspaceUser,
+    WorkspaceUserListResponse
 )
 from app.schemas.xmla_metadata import (
     XmlaSemanticModelMetadataResponse,
@@ -500,4 +506,70 @@ async def get_workspace_report_semantic_lineage(
         access_token=access_token,
         report_definition_format=(report_definition_format),
         semantic_model_definition_format=(semantic_model_definition_format),
+    )
+
+@router.get(
+    "/{workspace_id}/users",
+    response_model=WorkspaceUserListResponse,
+)
+async def list_workspace_users(
+    workspace_id: UUID,
+    access_token: Annotated[
+        str,
+        Depends(get_powerbi_access_token),
+    ],
+) -> WorkspaceUserListResponse:
+    """
+    Equivalent to Streamlit's get_workspace_users.
+    """
+    service = WorkspaceService()
+
+    return await service.list_workspace_users(
+        workspace_id=str(workspace_id),
+        access_token=access_token,
+    )
+
+
+@router.get(
+    "/{workspace_id}/dashboards",
+    response_model=DashboardListResponse,
+)
+async def list_workspace_dashboards(
+    workspace_id: UUID,
+    access_token: Annotated[
+        str,
+        Depends(get_powerbi_access_token),
+    ],
+) -> DashboardListResponse:
+    """
+    Equivalent to Streamlit's get_artifacts when artifact_type == 'dashboard'.
+    Note: Reports are already handled by list_workspace_reports.
+    """
+    service = WorkspaceService() # Or DashboardService if you prefer to split it
+
+    return await service.list_dashboards(
+        workspace_id=str(workspace_id),
+        access_token=access_token,
+    )
+
+
+@router.get(
+    "/inventory/filtered",
+    response_model=WorkspaceListResponse,
+)
+async def get_workspace_inventory(
+    access_token: Annotated[
+        str,
+        Depends(get_powerbi_access_token),
+    ],
+) -> WorkspaceListResponse:
+    """
+    Equivalent to Streamlit's get_workspace_inventory.
+    You already have list_workspaces (GET /), but if you need the specific 
+    filter_excluded_workspaces logic, you can handle that in this service method.
+    """
+    service = WorkspaceService()
+
+    return await service.get_filtered_workspace_inventory(
+        access_token=access_token,
     )

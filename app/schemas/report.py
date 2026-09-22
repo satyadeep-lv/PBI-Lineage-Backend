@@ -22,3 +22,16 @@ class ReportListResponse(BaseModel):
     reports: list[Report]
 
     count: int
+
+class ReportUser(BaseModel):
+    identifier: str
+    principal_type: str | None = None
+    email_address: str | None = None
+    display_name: str | None = None
+    user_right: str | None = None
+
+
+class ReportUserListResponse(BaseModel):
+    report_id: str
+    users: list[ReportUser]
+    count: int
