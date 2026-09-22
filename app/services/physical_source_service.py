@@ -11,6 +11,7 @@ from app.schemas.physical_source import (
     PhysicalSourceWarning,
     QuerySourceMapping,
 )
+from app.services.sql_column_parser import split_dotted_identifier
 
 _DATABASE_CONNECTORS = {
     "sql.database": "sqlserver",
@@ -41,10 +42,15 @@ _NAVIGATION_PATTERN = re.compile(
     r"\s*,\s*(?:Item|Name)\s*=\s*\"(?P<object>(?:\"\"|[^\"])*)\"\s*\]",
     re.IGNORECASE,
 )
+_KIND_NAVIGATION_PATTERN = re.compile(
+    r"\[\s*Name\s*=\s*\"(?P<name>(?:\"\"|[^\"])*)\""
+    r"\s*,\s*Kind\s*=\s*\"(?P<kind>Database|Schema|Table|View)\"\s*\]",
+    re.IGNORECASE,
+)
+_SQL_OBJECT_IDENTIFIER = r"\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[A-Za-z_][\w$]*"
 _SQL_OBJECT_PATTERN = re.compile(
-    r"\b(?:from|join)\s+"
-    r"(?:(?:\[(?P<schema_bracket>[^\]]+)\]|(?P<schema>[A-Za-z_][\w$]*))\s*\.\s*)?"
-    r"(?:\[(?P<object_bracket>[^\]]+)\]|(?P<object>[A-Za-z_][\w$]*))",
+    rf"\b(?:from|join)\s+((?:{_SQL_OBJECT_IDENTIFIER})"
+    rf"(?:\s*\.\s*(?:{_SQL_OBJECT_IDENTIFIER})){{0,2}})",
     re.IGNORECASE,
 )
 _SAFE_GATEWAY_KEYS = {
@@ -87,7 +93,7 @@ class PhysicalSourceDiscoveryService:
                         PhysicalSourceWarning(
                             code="POWER_QUERY_SOURCE_NOT_DETECTED",
                             message=(
-                                "No supported physical source was detected"
+                                "No supported physical source was detected "
                                 "in the partition."
                             ),
                             source_path=partition.source_path,
@@ -152,18 +158,17 @@ class PhysicalSourceDiscoveryService:
                 for native_query in candidates:
                     sql_objects = _sql_objects(native_query) if native_query else []
                     object_candidates = sql_objects or (
-                        [navigation] if navigation else [None]
+                        [navigation] if navigation else [(None, None, None)]
                     )
 
                     for object_target in object_candidates:
-                        schema_name = object_target[0] if object_target else None
-                        object_name = object_target[1] if object_target else None
+                        sql_database, schema_name, object_name = object_target
                         source = self._source(
                             kind="database",
                             provider=_DATABASE_CONNECTORS[normalized_name],
                             connector=call.name,
                             server=server,
-                            database=database,
+                            database=sql_database or database,
                             schema_name=schema_name,
                             object_name=object_name,
                             warehouse=warehouse,
@@ -301,11 +306,29 @@ class PhysicalSourceDiscoveryService:
                 break
 
     @staticmethod
-    def _navigation_target(expression: str) -> tuple[str, str] | None:
+    def _navigation_target(
+        expression: str,
+    ) -> tuple[str | None, str | None, str] | None:
+        kind_values: dict[str, str] = {}
+        for match in _KIND_NAVIGATION_PATTERN.finditer(expression):
+            kind_values.setdefault(
+                match.group("kind").casefold(),
+                match.group("name").replace('""', '"'),
+            )
+
+        object_name = kind_values.get("table") or kind_values.get("view")
+        if object_name:
+            return (
+                kind_values.get("database"),
+                kind_values.get("schema"),
+                object_name,
+            )
+
         match = _NAVIGATION_PATTERN.search(expression)
         if not match:
             return None
         return (
+            None,
             match.group("schema").replace('""', '"'),
             match.group("object").replace('""', '"'),
         )
@@ -558,14 +581,38 @@ def _record_string(arguments: list[str], key: str) -> str | None:
     return None
 
 
-def _sql_objects(query: str) -> list[tuple[str | None, str]]:
-    objects: list[tuple[str | None, str]] = []
+def _sql_objects(query: str) -> list[tuple[str | None, str | None, str]]:
+    """Extract (database, schema, object) triples referenced by ``FROM``/
+    ``JOIN`` in a native SQL query. Supports quoted/bracketed/backtick
+    identifiers and up to three dotted parts; a bare or two-part reference
+    leaves the missing leading part(s) as ``None``.
+    """
+    objects: list[tuple[str | None, str | None, str]] = []
+    seen: set[tuple[str | None, str | None, str]] = set()
+
     for match in _SQL_OBJECT_PATTERN.finditer(query):
-        schema_name = match.group("schema_bracket") or match.group("schema")
-        object_name = match.group("object_bracket") or match.group("object")
-        target = (schema_name, object_name)
-        if target not in objects:
+        raw_identifier = match.group(1)
+        if raw_identifier.strip().startswith("("):
+            continue
+
+        parts = split_dotted_identifier(raw_identifier)
+        if not parts:
+            continue
+
+        database: str | None = None
+        schema_name: str | None = None
+        object_name = parts[-1]
+
+        if len(parts) == 3:
+            database, schema_name, object_name = parts[-3], parts[-2], parts[-1]
+        elif len(parts) == 2:
+            schema_name, object_name = parts[-2], parts[-1]
+
+        target = (database, schema_name, object_name)
+        if target not in seen:
+            seen.add(target)
             objects.append(target)
+
     return objects
 
 

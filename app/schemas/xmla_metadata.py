@@ -73,6 +73,25 @@ class XmlaSemanticModelRelationship(BaseModel):
     security_filtering_behavior: str | None = None
 
 
+class XmlaCalcDependency(BaseModel):
+    """One row of the engine-computed ``DISCOVER_CALC_DEPENDENCY`` DMV.
+
+    Authoritative: this is Microsoft's own dependency graph, not a
+    text-parsed guess, so it covers every ``object_type`` the DMV reports
+    (``MEASURE``, ``CALC_COLUMN``, ``CALC_TABLE``, relationship/RLS rows,
+    etc.) — callers filter to the object types they care about.
+    """
+
+    object_type: str | None = None
+    table: str | None = None
+    object: str | None = None
+    expression: str | None = None
+    referenced_object_type: str
+    referenced_table: str | None = None
+    referenced_object: str | None = None
+    referenced_expression: str | None = None
+
+
 class XmlaSemanticModelMetadataResponse(BaseModel):
     workspace_id: str
     semantic_model_id: str
@@ -89,4 +108,5 @@ class XmlaSemanticModelMetadataResponse(BaseModel):
 
     tables: list[XmlaSemanticModelTable] = Field(default_factory=list)
     relationships: list[XmlaSemanticModelRelationship] = Field(default_factory=list)
+    calc_dependencies: list[XmlaCalcDependency] = Field(default_factory=list)
     warnings: list[XmlaMetadataWarning] = Field(default_factory=list)

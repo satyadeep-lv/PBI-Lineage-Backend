@@ -329,6 +329,38 @@ each provider's own API response) and is normally satisfied once during
 image build, not at request time. See "Power AI" below for the current
 scope.
 
+### GitHub production feature switches
+
+The Azure backend deployment reads two non-secret switches from the GitHub
+`production` environment. They are no longer hardcoded in the VM deployment
+script and both fail closed (`false`) when the variable is missing.
+
+| GitHub environment variable | Values | Recommended production value | Effect |
+| --- | --- | --- | --- |
+| `ENABLE_API_DOCS` | `true` or `false` | `false` unless operators need the live catalog | Controls FastAPI Swagger/ReDoc and `/openapi.json`. The frontend API Reference needs `/openapi.json` for the complete live operation list. |
+| `AI_ENABLED` | `true` or `false` | `false` until Power AI is approved | Controls `/api/v1/ai/chat` and `/api/v1/ai/chat/stream`. `/api/v1/ai/status` remains the frontend's source of truth. |
+
+Configure them in GitHub:
+
+1. Open the **PBI-Lineage-Backend** repository.
+2. Go to **Settings -> Environments -> production**.
+3. Under **Environment variables**, create `ENABLE_API_DOCS` and
+   `AI_ENABLED` using lowercase `true` or `false`.
+4. Run **Actions -> Backend CD -> Run workflow** from `main`, or merge a
+   commit that completes Backend CI while `DEPLOYMENT_ENABLED=true`.
+5. Verify Power AI with `GET /api/v1/ai/status`. Changing a GitHub variable
+   does not alter the already-running container until Backend CD redeploys it.
+
+The automated Azure deployment currently keeps `AI_PROVIDER=fake`, which is
+deterministic and requires no external API key. `AI_ENABLED=true` therefore
+enables the safe end-to-end Power AI path, not a paid external model. Before
+switching to a real provider, extend the deployment to load the selected
+provider credential from Azure Key Vault. Never put provider keys in GitHub
+variables, frontend `VITE_*` values, workflow logs, or source control.
+
+For local development, set the same backend values in `.env` and restart
+FastAPI. No frontend AI environment variable is required.
+
 ## API Overview
 
 All endpoints are mounted under `/api/v1`.
@@ -816,25 +848,68 @@ definitions.
 ### XMLA Metadata
 
 ```text
-GET /api/v1/workspaces/{workspace_id}/semantic-models/{semantic_model_id}/xmla/metadata
+GET  /api/v1/workspaces/{workspace_id}/semantic-models/{semantic_model_id}/xmla/metadata
+POST /api/v1/workspaces/{workspace_id}/semantic-models/{semantic_model_id}/column-lineage
 ```
 
-Optional query parameters:
+Optional query parameters (both routes):
 
 - `workspaceName`
 - `databaseName`
 
-This endpoint uses the Power BI token dependency and the XMLA ADODB/MSOLAP
-adapter to query `$SYSTEM.TMSCHEMA_*` rowsets for tables, columns, measures,
-partitions, hierarchies, levels, and relationships. Workspace names are URI
-encoded in the `powerbi://api.powerbi.com/v1.0/{tenant}/{workspace}` endpoint.
-If `workspaceName` or `databaseName` is not supplied, the service resolves the
+`GET .../xmla/metadata` uses the Power BI token dependency and the XMLA
+ADODB/MSOLAP adapter to query `$SYSTEM.TMSCHEMA_*` rowsets for tables,
+columns, measures, partitions, hierarchies, levels, and relationships, plus
+`$SYSTEM.DISCOVER_CALC_DEPENDENCY` for the engine's own computed
+measure/calculated-column/calculated-table dependency graph
+(`calc_dependencies`). Workspace names are URI encoded in the
+`powerbi://api.powerbi.com/v1.0/{tenant}/{workspace}` endpoint. If
+`workspaceName` or `databaseName` is not supplied, the service resolves the
 workspace name and semantic model name from Power BI REST before opening the
 XMLA connection because XMLA URLs use names, not REST object IDs.
 
 If `pywin32`, Windows COM, or the Microsoft Analysis Services OLE DB Provider
 is not available on the host, the client returns
 `PROVIDER_INTEGRATION_NOT_CONFIGURED` with a setup message.
+
+`POST .../column-lineage` returns every measure/calculated column/calculated
+table mapped to the physical database columns it ultimately reads from. It is
+XMLA-primary, not TMDL-based: the dependency graph comes from
+`DISCOVER_CALC_DEPENDENCY` (Microsoft's own engine-computed graph, not a
+regex guess over DAX text — so there is no `DAX_REFERENCE_UNRESOLVED`-style
+failure mode), and the physical source comes from
+`TMSCHEMA_PARTITIONS.QueryDefinition` (the partition's real M/SQL text, as
+reported live by the engine). `app/services/xmla_column_lineage_adapter.py`
+converts that XMLA metadata into the same `ParsedSemanticModelResponse`/DAX
+dependency shapes the rest of the lineage code already understands, so
+`PhysicalSourceDiscoveryService` (which extracts `database.schema.table`-
+qualified `FROM`/`JOIN` targets and Power Query navigation, including the
+`Kind="Database"/"Schema"/"Table"/"View"` chain) and the native-SQL
+`SELECT`-list parser (`app/services/sql_column_parser.py`) run unchanged
+against engine-reported text instead of parsed TMDL text.
+
+The `SELECT`-list parser resolves both explicit (`expr AS alias`) and
+implicit (`expr alias`, no `AS`) aliases, and — critically for a computed
+projection — returns **every** physical column a single semantic column's
+expression reads from, not just one: `FIRST_NAME || ' ' || LAST_NAME AS
+FULL_NAME` resolves to both `FIRST_NAME` and `LAST_NAME`, each surfaced as its
+own entry in that row's `physical_columns`. Each entry's `resolution_method`
+is `native_query_select` when the physical column name(s) came from the
+partition's native SQL projection, or `same_name_assumed` when no native
+query was found (or it didn't reference that column) and the semantic
+model's `SourceColumn` name is assumed to match the physical column name
+unchanged. The SQL parser is intentionally not a full SQL engine: a computed
+expression with no identifiable column reference (e.g. a hardcoded string
+literal) falls back to assuming a physical column named after its alias, and
+it does not track subqueries nested in the column list or later
+`Table.RenameColumns` M steps. Warnings surfaced from physical source
+discovery (`POWER_QUERY_SOURCE_NOT_DETECTED`, `GATEWAY_CONNECTION_DETAILS_INVALID`)
+are included unchanged; `calc_dependencies` rows the engine reports for
+non-calculation object types (relationships, RLS, etc.) are ignored rather
+than surfaced as noise. Gateway-datasource enrichment is not included in
+this endpoint. This route needs a Windows host with the same XMLA/MSOLAP
+setup as `GET .../xmla/metadata` — it is not available on non-Windows
+deployments or when XMLA is disabled on the capacity.
 
 ### Merged Semantic Model Metadata
 

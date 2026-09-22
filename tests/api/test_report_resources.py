@@ -22,6 +22,11 @@ from app.schemas.report_semantic_lineage import (
     ReportSemanticLineageResponse,
     SemanticLineageDiagnosticsSummary,
 )
+from app.schemas.semantic_column_lineage import (
+    PhysicalColumnReference,
+    SemanticColumnLineageRow,
+    SemanticModelColumnLineageResponse,
+)
 from app.schemas.semantic_model_definition import (
     SemanticModelDefinition,
     SemanticModelDefinitionPart,
@@ -43,6 +48,9 @@ from app.services.report_semantic_lineage_service import (
 )
 from app.services.report_service import (
     ReportService,
+)
+from app.services.semantic_column_lineage_service import (
+    SemanticColumnLineageService,
 )
 from app.services.semantic_model_definition_service import (
     SemanticModelDefinitionService,
@@ -366,6 +374,85 @@ def test_get_semantic_model_definition(
     assert payload["definition"]["format"] == "TMSL"
     assert payload["definition"]["parts"][0]["payloadType"] == "InlineBase64"
     assert "payload_type" not in payload["definition"]["parts"][0]
+
+
+def test_get_semantic_model_column_lineage(
+    client,
+    monkeypatch,
+):
+    async def fake_build_lineage(
+        self,
+        *,
+        workspace_id: str,
+        semantic_model_id: str,
+        access_token: str,
+        workspace_name: str | None,
+        database_name: str | None,
+    ) -> SemanticModelColumnLineageResponse:
+        assert workspace_id == WORKSPACE_ID
+        assert semantic_model_id == SEMANTIC_MODEL_ID
+        assert access_token == "fake-test-token"
+        assert workspace_name == "Sales Workspace"
+        assert database_name == "Sales Model"
+
+        return SemanticModelColumnLineageResponse(
+            workspace_id=workspace_id,
+            semantic_model_id=semantic_model_id,
+            rows=[
+                SemanticColumnLineageRow(
+                    semantic_table="Sales",
+                    semantic_object_type="measure",
+                    semantic_object_name="Total Sales",
+                    referenced_semantic_table="Sales",
+                    referenced_semantic_column="Amount",
+                    dependency_depth=1,
+                    is_direct_dependency=True,
+                    physical_columns=[
+                        PhysicalColumnReference(
+                            source_id="source-1",
+                            provider="sqlserver",
+                            database="warehouse",
+                            schema_name="dbo",
+                            object_name="Sales",
+                            column_name="SalesAmount",
+                            resolution_method="native_query_select",
+                            fully_qualified_name="warehouse.dbo.Sales.SalesAmount",
+                        )
+                    ],
+                )
+            ],
+            object_count=1,
+            row_count=1,
+        )
+
+    monkeypatch.setattr(
+        SemanticColumnLineageService,
+        "build_lineage_from_xmla",
+        fake_build_lineage,
+    )
+
+    response = client.post(
+        f"/api/v1/workspaces/{WORKSPACE_ID}/"
+        "semantic-models/"
+        f"{SEMANTIC_MODEL_ID}/column-lineage"
+        "?workspaceName=Sales%20Workspace"
+        "&databaseName=Sales%20Model"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+
+    assert payload["workspace_id"] == WORKSPACE_ID
+    assert payload["semantic_model_id"] == SEMANTIC_MODEL_ID
+    assert payload["row_count"] == 1
+    row = payload["rows"][0]
+    assert row["semantic_object_name"] == "Total Sales"
+    assert row["referenced_semantic_column"] == "Amount"
+    assert row["physical_columns"][0]["fully_qualified_name"] == (
+        "warehouse.dbo.Sales.SalesAmount"
+    )
+    assert row["physical_columns"][0]["resolution_method"] == "native_query_select"
 
 
 def test_semantic_model_definition_rejects_invalid_format(

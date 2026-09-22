@@ -5,6 +5,7 @@ from typing import Any, Self
 import pytest
 
 from app.clients.xmla_client import (
+    DISCOVER_CALC_DEPENDENCY_QUERY,
     TMSCHEMA_COLUMNS_QUERY,
     TMSCHEMA_HIERARCHIES_QUERY,
     TMSCHEMA_LEVELS_QUERY,
@@ -189,7 +190,7 @@ def _rowsets() -> dict[
                 "Name": "Sales",
                 "Mode": "Import",
                 "SourceType": "M",
-                "Expression": ("let Source = ..."),
+                "QueryDefinition": ("let Source = ..."),
                 "IsRefreshable": True,
             }
         ],
@@ -223,6 +224,18 @@ def _rowsets() -> dict[
                 "CrossFilteringBehavior": "Single",
                 "SecurityFilteringBehavior": ("OneDirection"),
             }
+        ],
+        DISCOVER_CALC_DEPENDENCY_QUERY: [
+            {
+                "OBJECT_TYPE": "MEASURE",
+                "TABLE": "Sales",
+                "OBJECT": "Total Sales",
+                "EXPRESSION": "SUM(Sales[Amount])",
+                "REFERENCED_OBJECT_TYPE": "COLUMN",
+                "REFERENCED_TABLE": "Sales",
+                "REFERENCED_OBJECT": "Amount",
+                "REFERENCED_EXPRESSION": None,
+            },
         ],
     }
 
@@ -300,6 +313,7 @@ async def test_xmla_metadata_reads_adodb_rowsets():
         TMSCHEMA_HIERARCHIES_QUERY,
         TMSCHEMA_LEVELS_QUERY,
         TMSCHEMA_RELATIONSHIPS_QUERY,
+        DISCOVER_CALC_DEPENDENCY_QUERY,
     ]
     assert metadata["database_name"] == ("Sales Model")
     assert len(metadata["tables"]) == 2
@@ -322,6 +336,7 @@ async def test_xmla_metadata_reads_adodb_rowsets():
     assert sales_table["columns"][1]["sort_by_column"] == "DateKey"
     assert sales_table["measures"][0]["expression"] == "SUM(Sales[Amount])"
     assert sales_table["partitions"][0]["source_type"] == "M"
+    assert sales_table["partitions"][0]["expression"] == "let Source = ..."
 
     date_table = metadata["tables"][1]
 
@@ -340,6 +355,59 @@ async def test_xmla_metadata_reads_adodb_rowsets():
         }
     ]
     assert metadata["warnings"] == []
+    assert metadata["calc_dependencies"] == [
+        {
+            "object_type": "MEASURE",
+            "table": "Sales",
+            "object": "Total Sales",
+            "expression": "SUM(Sales[Amount])",
+            "referenced_object_type": "COLUMN",
+            "referenced_table": "Sales",
+            "referenced_object": "Amount",
+            "referenced_expression": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_xmla_calc_dependency_without_object_name_is_skipped():
+    rowsets = {
+        DISCOVER_CALC_DEPENDENCY_QUERY: [
+            {
+                "OBJECT_TYPE": "ACTIVE_RELATIONSHIP",
+                "TABLE": "Sales",
+                "OBJECT": "",
+                "REFERENCED_OBJECT_TYPE": "TABLE",
+                "REFERENCED_TABLE": "Date",
+                "REFERENCED_OBJECT": "Date",
+            },
+        ],
+    }
+    factory = _FakeConnectionFactory(rowsets)
+    client = XmlaClient(
+        connection_factory=factory,
+        tenant_name="myorg",
+    )
+
+    metadata = await client.get_semantic_model_metadata(
+        workspace_id="workspace-123",
+        semantic_model_id="model-123",
+        access_token="token",
+        workspace_name="Sales Workspace",
+        database_name="Sales Model",
+    )
+
+    assert metadata["calc_dependencies"] == []
+    assert metadata["warnings"] == [
+        {
+            "code": "XMLA_CALC_DEPENDENCY_SKIPPED",
+            "message": (
+                "A calc dependency row did not include an object name and "
+                "referenced object type."
+            ),
+            "object_name": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio

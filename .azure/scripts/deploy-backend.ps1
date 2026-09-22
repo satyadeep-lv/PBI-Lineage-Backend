@@ -15,7 +15,13 @@ param(
     [int]$HostPort = 8000,
 
     [Parameter(Mandatory = $false)]
-    [int]$ContainerPort = 8000
+    [int]$ContainerPort = 8000,
+
+    [Parameter(Mandatory = $false)]
+    [string]$EnableApiDocs = "false",
+
+    [Parameter(Mandatory = $false)]
+    [string]$AiEnabled = "false"
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,6 +65,33 @@ if (
     throw "ContainerPort is invalid: $ContainerPort"
 }
 
+function ConvertTo-NormalizedBooleanString {
+
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    $NormalizedValue = $Value.Trim().ToLowerInvariant()
+
+    if ($NormalizedValue -notin @("true", "false")) {
+        throw "$Name must be exactly 'true' or 'false'."
+    }
+
+    return $NormalizedValue
+}
+
+$EnableApiDocs = ConvertTo-NormalizedBooleanString `
+    -Name "EnableApiDocs" `
+    -Value $EnableApiDocs
+
+$AiEnabled = ConvertTo-NormalizedBooleanString `
+    -Name "AiEnabled" `
+    -Value $AiEnabled
+
 Write-Host "========================================="
 Write-Host "PBI Lineage Backend Deployment"
 Write-Host "========================================="
@@ -68,6 +101,8 @@ Write-Host "ACR:         $AcrName"
 Write-Host "Key Vault:   $KeyVaultName"
 Write-Host "Host port:   $HostPort"
 Write-Host "Target port: $ContainerPort"
+Write-Host "API docs:    $EnableApiDocs"
+Write-Host "Power AI:    $AiEnabled"
 
 # ============================================================
 # Refresh PATH
@@ -192,7 +227,7 @@ $env:LOG_LEVEL = "INFO"
 
 $env:LINEAGE_DATABASE_PATH = "data/lineage.db"
 
-$env:SNOWFLAKE_ALLOW_EXTERNAL_BROWSER_AUTH = "false"
+$env:SNOWFLAKE_ALLOW_EXTERNAL_BROWSER_AUTH = "true"
 
 # These fields are list[str] in Pydantic.
 # They MUST remain valid JSON strings.
@@ -208,16 +243,16 @@ $env:ALLOWED_HOSTS = (
 # HTTPS terminates at Cloudflare/IIS.
 $env:FORCE_HTTPS = "false"
 
-$env:ENABLE_API_DOCS = "false"
+$env:ENABLE_API_DOCS = $EnableApiDocs
 
 $env:AUTH_COOKIE_SECURE = "true"
 $env:AUTH_COOKIE_SAMESITE = "lax"
 
-# Power AI: enabled with the network-free fake provider so the frontend's
-# AI panel is functional end-to-end. Switch AI_PROVIDER to a real provider
-# (and add its API key via Key Vault, mirroring LINEAGE_ADMIN_API_KEY below)
-# once a real provider is ready to be wired in.
-$env:AI_ENABLED = "true"
+# Power AI remains provider-independent. GitHub controls only the safe
+# enable/disable switch here; the automated deployment uses the deterministic,
+# network-free fake provider until real-provider credentials are wired through
+# Key Vault.
+$env:AI_ENABLED = $AiEnabled
 $env:AI_PROVIDER = "fake"
 
 # ============================================================

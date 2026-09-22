@@ -20,6 +20,7 @@ TMSCHEMA_PARTITIONS_QUERY = "SELECT * FROM $SYSTEM.TMSCHEMA_PARTITIONS"
 TMSCHEMA_HIERARCHIES_QUERY = "SELECT * FROM $SYSTEM.TMSCHEMA_HIERARCHIES"
 TMSCHEMA_LEVELS_QUERY = "SELECT * FROM $SYSTEM.TMSCHEMA_LEVELS"
 TMSCHEMA_RELATIONSHIPS_QUERY = "SELECT * FROM $SYSTEM.TMSCHEMA_RELATIONSHIPS"
+DISCOVER_CALC_DEPENDENCY_QUERY = "SELECT * FROM $SYSTEM.DISCOVER_CALC_DEPENDENCY"
 
 
 class XmlaMetadataConnection(Protocol):
@@ -334,6 +335,7 @@ _ROWSET_QUERIES = {
     "hierarchies": TMSCHEMA_HIERARCHIES_QUERY,
     "levels": TMSCHEMA_LEVELS_QUERY,
     "relationships": TMSCHEMA_RELATIONSHIPS_QUERY,
+    "calc_dependencies": DISCOVER_CALC_DEPENDENCY_QUERY,
 }
 
 
@@ -603,7 +605,7 @@ def _metadata_from_rowsets(
                 ),
                 "expression": _text(
                     partition_row,
-                    "Expression",
+                    "QueryDefinition",
                 ),
                 "is_refreshable": _bool(
                     partition_row,
@@ -728,10 +730,68 @@ def _metadata_from_rowsets(
         )
     ]
 
+    calc_dependencies: list[dict[str, Any]] = []
+
+    for dependency_row in rowsets.get(
+        "calc_dependencies",
+        [],
+    ):
+        object_name = _text(
+            dependency_row,
+            "OBJECT",
+        )
+        referenced_object_type = _text(
+            dependency_row,
+            "REFERENCED_OBJECT_TYPE",
+        )
+
+        if not object_name or not referenced_object_type:
+            _add_warning(
+                warnings,
+                code="XMLA_CALC_DEPENDENCY_SKIPPED",
+                message=(
+                    "A calc dependency row did not include an object name and "
+                    "referenced object type."
+                ),
+            )
+            continue
+
+        calc_dependencies.append(
+            {
+                "object_type": _text(
+                    dependency_row,
+                    "OBJECT_TYPE",
+                ),
+                "table": _text(
+                    dependency_row,
+                    "TABLE",
+                ),
+                "object": object_name,
+                "expression": _text(
+                    dependency_row,
+                    "EXPRESSION",
+                ),
+                "referenced_object_type": referenced_object_type,
+                "referenced_table": _text(
+                    dependency_row,
+                    "REFERENCED_TABLE",
+                ),
+                "referenced_object": _text(
+                    dependency_row,
+                    "REFERENCED_OBJECT",
+                ),
+                "referenced_expression": _text(
+                    dependency_row,
+                    "REFERENCED_EXPRESSION",
+                ),
+            }
+        )
+
     return {
         "database_name": database_name,
         "tables": tables,
         "relationships": relationships,
+        "calc_dependencies": calc_dependencies,
         "warnings": warnings,
     }
 

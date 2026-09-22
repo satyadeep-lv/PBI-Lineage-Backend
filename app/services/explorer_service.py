@@ -1,11 +1,15 @@
 import asyncio
-from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from app.core.exceptions import AppException, InvalidLineageRequestError
+from app.domain.dax_lineage import (
+    expression_index,
+    physical_sources_by_table,
+    terminal_dependencies,
+)
 from app.schemas.dax_dependency import (
     DaxDependencyAnalysisResponse,
     DaxObjectReference,
@@ -835,12 +839,12 @@ class ExplorerService:
                 continue
             dax = dax_by_model[item.model_key]
             physical = physical_by_model[item.model_key]
-            expressions = self._expression_index(item.semantic_model)
-            sources_by_table = self._physical_sources_by_table(physical)
+            expressions = expression_index(item.semantic_model)
+            sources_by_table = physical_sources_by_table(physical)
 
             for owner in dax.objects:
-                terminal_dependencies = self._terminal_dependencies(owner, dax)
-                if not terminal_dependencies:
+                owner_terminal_dependencies = terminal_dependencies(owner, dax)
+                if not owner_terminal_dependencies:
                     rows.append(
                         self._measure_source_row(
                             item=item,
@@ -853,7 +857,7 @@ class ExplorerService:
                     )
                     continue
 
-                for dependency, depth in terminal_dependencies:
+                for dependency, depth in owner_terminal_dependencies:
                     physical_sources = sources_by_table.get(
                         (dependency.table_name or "").casefold(),
                         [],
@@ -948,86 +952,6 @@ class ExplorerService:
                 else None
             ),
         )
-
-    @staticmethod
-    def _expression_index(
-        semantic_model: ParsedSemanticModelResponse,
-    ) -> dict[str, str]:
-        expressions: dict[str, str] = {}
-        for table in semantic_model.tables:
-            if table.expression:
-                expressions[table.name.casefold()] = table.expression
-            for column in table.columns:
-                if column.expression:
-                    expressions[f"{table.name}[{column.name}]".casefold()] = (
-                        column.expression
-                    )
-            for measure in table.measures:
-                if measure.expression:
-                    expressions[f"{table.name}[{measure.name}]".casefold()] = (
-                        measure.expression
-                    )
-        return expressions
-
-    @staticmethod
-    def _terminal_dependencies(
-        owner: DaxObjectReference,
-        dax: DaxDependencyAnalysisResponse,
-    ) -> list[tuple[DaxObjectReference, int]]:
-        predecessors: dict[str, list[DaxObjectReference]] = defaultdict(list)
-        for edge in dax.dependencies:
-            predecessors[edge.target.qualified_name.casefold()].append(edge.source)
-
-        terminals: dict[tuple[str, str], tuple[DaxObjectReference, int]] = {}
-
-        def walk(
-            current: DaxObjectReference,
-            depth: int,
-            path: frozenset[str],
-        ) -> None:
-            current_key = current.qualified_name.casefold()
-            sources = predecessors.get(current_key, [])
-            if not sources:
-                if depth > 0:
-                    terminal_key = (current.object_type, current_key)
-                    existing = terminals.get(terminal_key)
-                    if existing is None or depth < existing[1]:
-                        terminals[terminal_key] = (current, depth)
-                return
-
-            for source in sources:
-                source_key = source.qualified_name.casefold()
-                if source_key in path:
-                    continue
-                walk(source, depth + 1, path | {source_key})
-
-        owner_key = owner.qualified_name.casefold()
-        walk(owner, 0, frozenset({owner_key}))
-        return sorted(
-            terminals.values(),
-            key=lambda item: (
-                item[1],
-                item[0].qualified_name.casefold(),
-                item[0].object_type,
-            ),
-        )
-
-    @staticmethod
-    def _physical_sources_by_table(
-        physical: PhysicalSourceDiscoveryResponse,
-    ) -> dict[str, list[PhysicalDataSource]]:
-        source_by_id = {source.source_id: source for source in physical.sources}
-        sources_by_table: dict[str, dict[str, PhysicalDataSource]] = defaultdict(dict)
-        for mapping in physical.mappings:
-            table_sources = sources_by_table[mapping.semantic_table.casefold()]
-            for source_id in mapping.source_ids:
-                source = source_by_id.get(source_id)
-                if source is not None:
-                    table_sources.setdefault(source_id, source)
-        return {
-            table_name: sorted(values.values(), key=lambda item: item.source_id)
-            for table_name, values in sources_by_table.items()
-        }
 
     @staticmethod
     def _report_layout_rows(

@@ -90,6 +90,51 @@ in
     assert {source.provider for source in result.sources} == {"file", "web"}
 
 
+def test_native_query_resolves_database_qualified_object():
+    model = _semantic_model(
+        """
+let
+    Source = Sql.Database("sql.example.com", "warehouse"),
+    Result = Value.NativeQuery(
+        Source,
+        "SELECT * FROM Analytics.dbo.FactSales"
+    )
+in
+    Result
+"""
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(model)
+
+    assert result.source_count == 1
+    source = result.sources[0]
+    assert source.database == "Analytics"
+    assert source.schema_name == "dbo"
+    assert source.object_name == "FactSales"
+
+
+def test_kind_based_navigation_resolves_database_schema_and_table():
+    model = _semantic_model(
+        """
+let
+    Source = Sql.Database("sql.example.com"),
+    Database = Source{[Name="Analytics",Kind="Database"]}[Data],
+    Schema = Database{[Name="dbo",Kind="Schema"]}[Data],
+    Table = Schema{[Name="FactSales",Kind="Table"]}[Data]
+in
+    Table
+"""
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(model)
+
+    assert result.source_count == 1
+    source = result.sources[0]
+    assert source.database == "Analytics"
+    assert source.schema_name == "dbo"
+    assert source.object_name == "FactSales"
+
+
 def test_gateway_details_are_sanitized_and_matched_to_query_source():
     model = _semantic_model('Sql.Database("sql.example.com", "warehouse")')
     gateway = GatewayDatasource(
