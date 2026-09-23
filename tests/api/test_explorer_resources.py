@@ -11,6 +11,7 @@ from app.schemas.explorer import (
     ExplorerSnapshotResponse,
     MeasureSourceLineageDataset,
     ReportLayoutDataset,
+    ReportSourceTableDataset,
     SemanticModelObjectsDataset,
     SourceDatabaseLineageDataset,
     VisualSourceLookupDataset,
@@ -38,6 +39,10 @@ def override_authentication():
         (
             "/api/v1/explorer/source-database-lineage",
             "source_database_lineage",
+        ),
+        (
+            "/api/v1/explorer/report-source-tables",
+            "report_source_tables",
         ),
         (
             "/api/v1/explorer/semantic-model-objects",
@@ -123,6 +128,7 @@ def _empty_snapshot() -> ExplorerSnapshotResponse:
         report_count=0,
         semantic_model_count=0,
         source_database_lineage=SourceDatabaseLineageDataset(),
+        report_source_tables=ReportSourceTableDataset(),
         semantic_model_objects=SemanticModelObjectsDataset(),
         measure_source_lineage=MeasureSourceLineageDataset(),
         report_layout=ReportLayoutDataset(),

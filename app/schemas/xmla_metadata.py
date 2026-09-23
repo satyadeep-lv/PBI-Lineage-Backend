@@ -20,6 +20,7 @@ class XmlaSemanticModelColumn(BaseModel):
     is_hidden: bool | None = None
     description: str | None = None
     lineage_tag: str | None = None
+    source_lineage_tag: str | None = None
 
 
 class XmlaSemanticModelMeasure(BaseModel):

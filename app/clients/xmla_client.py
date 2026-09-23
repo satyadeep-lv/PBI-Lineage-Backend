@@ -485,6 +485,10 @@ def _metadata_from_rowsets(
                 column_row,
                 "LineageTag",
             ),
+            "source_lineage_tag": _text(
+                column_row,
+                "SourceLineageTag",
+            ),
         }
 
         table["columns"].append(column_payload)

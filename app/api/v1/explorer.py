@@ -11,6 +11,7 @@ from app.schemas.explorer import (
     ExplorerSnapshotResponse,
     MeasureSourceLineageResponse,
     ReportLayoutResponse,
+    ReportSourceTableResponse,
     SemanticModelObjectsResponse,
     SourceDatabaseLineageResponse,
     VisualSourceLookupResponse,
@@ -18,6 +19,7 @@ from app.schemas.explorer import (
 from app.services.explorer_service import (
     MEASURE_SOURCE_LINEAGE,
     REPORT_LAYOUT,
+    REPORT_SOURCE_TABLES,
     SEMANTIC_MODEL_OBJECTS,
     SOURCE_DATABASE_LINEAGE,
     VISUAL_SOURCE_LOOKUP,
@@ -75,6 +77,34 @@ async def get_source_database_lineage(
         **_response_context(snapshot),
         rows=snapshot.source_database_lineage.rows,
         count=snapshot.source_database_lineage.count,
+    )
+
+
+@router.post(
+    "/report-source-tables",
+    response_model=ReportSourceTableResponse,
+)
+async def get_report_source_tables(
+    request: ExplorerRequest,
+    fabric_access_token: Annotated[
+        str,
+        Depends(get_fabric_access_token),
+    ],
+    powerbi_access_token: Annotated[
+        str,
+        Depends(get_powerbi_access_token),
+    ],
+) -> ReportSourceTableResponse:
+    snapshot = await _build_dataset(
+        request,
+        dataset=REPORT_SOURCE_TABLES,
+        fabric_access_token=fabric_access_token,
+        powerbi_access_token=powerbi_access_token,
+    )
+    return ReportSourceTableResponse(
+        **_response_context(snapshot),
+        rows=snapshot.report_source_tables.rows,
+        count=snapshot.report_source_tables.count,
     )
 
 

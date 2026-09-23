@@ -25,6 +25,7 @@ class PhysicalDataSource(BaseModel):
     database: str | None = None
     schema_name: str | None = None
     object_name: str | None = None
+    object_kind: Literal["table", "view"] | None = None
     path: str | None = None
     url: str | None = None
     account: str | None = None

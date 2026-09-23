@@ -467,6 +467,23 @@ GET /api/v1/reports/{report_id}
 `GET /api/v1/reports/{report_id}` uses the Power BI **My workspace** endpoint.
 It is distinct from the existing workspace-scoped report route.
 
+`GET /api/v1/workspaces` reports each workspace's `type` and omits the ones
+Power BI provisions for itself (`AdminInsights`, shown in the portal as "Admin
+monitoring"): their semantic models are not readable through the Fabric
+definition APIs, so every lineage call against them fails upstream. Filtering
+is by `type`, not by the localizable display name. The single-workspace
+`GET /workspaces/{workspace_id}` route is not filtered — asking for one
+directly returns it.
+
+Reports carry `dataset_workspace_id` (Power BI's `datasetWorkspaceId`) for
+reports bound to a semantic model in another workspace. Power BI only
+populates it in some tenants, so treat it as a hint: the explorer resolves a
+model's workspace as explicit `semantic_model_workspace_id` → the report's
+`dataset_workspace_id` → the report's own workspace. Note that a report
+reaching into a second workspace is more often a *composite model* (a
+DirectQuery-to-semantic-model table), which shows up in the source datasets
+rather than here — see Explorer Data.
+
 ### Power BI Gateways
 
 ```text
@@ -572,20 +589,21 @@ not bypass or locally emulate these tenant controls.
 ```text
 POST /api/v1/explorer/snapshot
 POST /api/v1/explorer/source-database-lineage
+POST /api/v1/explorer/report-source-tables
 POST /api/v1/explorer/semantic-model-objects
 POST /api/v1/explorer/measure-source-lineage
 POST /api/v1/explorer/report-layout
 POST /api/v1/explorer/visual-source-lookup
 ```
 
-These routes are the typed replacement for the five legacy Streamlit tables.
-Use `/snapshot` for the initial explorer load; it retrieves each distinct
-workspace, report, report definition, and semantic model definition once, runs
-independent provider calls concurrently with a bounded limit, and derives all
-five datasets from the shared evidence. Use a focused endpoint for lazy-loaded
-tabs when only one table is needed. DAX and Power Query analysis run outside the
-event loop, and two reports sharing one semantic model share one definition
-request.
+These routes are the typed replacement for the five legacy Streamlit tables,
+plus `/report-source-tables`, a newer addition. Use `/snapshot` for the
+initial explorer load; it retrieves each distinct workspace, report, report
+definition, and semantic model definition once, runs independent provider
+calls concurrently with a bounded limit, and derives all six datasets from the
+shared evidence. Use a focused endpoint for lazy-loaded tabs when only one
+table is needed. DAX and Power Query analysis run outside the event loop, and
+two reports sharing one semantic model share one definition request.
 
 Request example:
 
@@ -601,6 +619,7 @@ Request example:
     }
   ],
   "include_gateway_sources": false,
+  "include_cross_model_matching": false,
   "report_definition_format": "PBIR",
   "semantic_model_definition_format": "TMDL"
 }
@@ -618,15 +637,92 @@ to `POST /api/v1/lineage/snowflake/trace` for the legacy table-lineage or
 column-lineage action; explorer retrieval does not trigger Snowflake queries
 automatically.
 
+Two classes of Power-BI-generated noise are filtered out. `GET /workspaces`
+omits workspaces Power BI provisions itself (`type: "AdminInsights"` — the
+"Admin monitoring" workspace), whose semantic models are not readable through
+the Fabric definition APIs and fail upstream on every lineage call. Every
+explorer dataset also drops Auto Date/Time tables (`LocalDateTable_<guid>`
+and `DateTableTemplate_<guid>`), which Power BI Desktop adds per date column
+and which can easily outnumber the real tables. The filter is applied once to
+the parsed model, so the physical-source and DAX analysis derived from it stay
+consistent; the raw `/semantic-models/{id}/definition/parsed` route still
+reports the model exactly as Fabric returns it.
+
+A table bound with DirectQuery to another semantic model has no inline Power
+Query — TMDL records it as an `entity` partition (`entityName` +
+`expressionSource`) pointing at a model-level shared `expression`. Those are
+resolved: the shared expression's `AnalysisServices.Database(<xmla endpoint>,
+<model>)` call becomes a source with `provider: "analysis_services"`, the
+workspace endpoint as its server, the upstream model as its database, and the
+partition's `entityName` as the object — so a cross-workspace composite table
+reports where it actually reads from instead of "unknown".
+
+`/source-database-lineage` and `/report-source-tables` always emit one row per
+semantic table, even when no physical source could be resolved (a calculated
+table is still skipped, matching Power BI's own semantics). An unresolved
+table gets `source_object_type: "unknown"` and
+`source_fully_qualified_name: "Unknown Source (e.g., Local Excel File, Web
+Data, Dataflow, or Calculated Table)"` rather than being silently dropped —
+this mirrors the legacy Streamlit tool's behavior, where a table backed by an
+Excel import, a Web.Contents call the parser doesn't recognize, or a dataflow
+still shows up in the inventory instead of vanishing from it.
+
+`include_cross_model_matching` (default `false`) enables upstream (composite
+/ DirectQuery-for-dataset) resolution for `/visual-source-lookup`: when a
+visual field matches a local table that is itself sourced from another Power
+BI dataset, the row is redirected to the true upstream table/column instead
+of the local passthrough one. This is opt-in because it costs a Power BI
+Admin API tenant-lineage scan (`admin/workspaces/getInfo?lineage=true`,
+submit + poll + fetch) per request, which needs admin-scanner permissions and
+adds real latency; leaving it off keeps today's same-model-only matching.
+When enabled, each `VisualSourceLookupRow` also carries `primary_dataset_id`
+(the report's own bound dataset), and, for matched rows,
+`matched_dataset_id`/`matched_semantic_model`/`matched_model_role`
+(`"primary"` or `"upstream"`) — `matched_model_role` is always `"primary"`
+with matching disabled. The redirect itself is a column-level join: a local
+column's `sourceLineageTag` (TMDL) / `SourceLineageTag` (live XMLA) is looked
+up against every other model's column `lineageTag`, first hit wins, and
+`match_reason` gets an `"; upstream object matched by SourceLineageTag"`
+suffix (or the bare sentence when there was no prior reason, which is the
+common case — a matched field's `match_reason` is otherwise empty). This
+follows the same DMV-level signal the legacy tool reads over live XMLA, but
+sourced from TMDL so it works without a Windows/MSOLAP host; discovery is
+scoped to the primary dataset's own workspace(s) plus whatever upstream
+workspace(s) the scan reports — it does not chase upstream-of-upstream
+chains beyond that first hop.
+
+`/report-source-tables` returns the distinct physical database tables/views a
+report ultimately reads from — one row per (workspace, report, physical
+table), not one row per semantic table/partition/query mapping. Use it when
+only a flat table inventory is needed (e.g. a "which tables does this report
+touch" listing); use `/source-database-lineage` when the semantic
+table/partition/query breakdown is needed too. Each row is: `workspace_name`,
+`report_name`, `report_id`, `semantic_model_id` ("Dataset ID"),
+`source_account` (the connector's account/server host — the Snowflake
+account identifier for `Snowflake.Databases`, or the storage account name for
+Azure Blob sources), `source_database`, `source_schema`, `table_name`, and
+`source_object_type` (`table`, `view`, or one of the non-table-shaped values
+`query`/`file`/`url`/`endpoint`/`unknown` also used by
+`/source-database-lineage`). The `table`/`view` distinction is only resolved
+when Power Query's `Kind="Table"`/`Kind="View"` navigation marker is present
+in the M expression; sources resolved from a native SQL `FROM`/`JOIN` or a
+`Schema=`/`Item=` navigation record default to `table` since the object kind
+cannot be determined from static text. Not every source is a database object:
+for a file-, folder- or URL-backed table there is no account/database/schema
+to report, so `table_name` falls back to the file path or URL and
+`source_object_type` is `file`/`url` — the row still identifies what the table
+reads from instead of being four nulls.
+
 Legacy screen mapping:
 
 | Legacy table | Endpoint | Main response rows |
 |---|---|---|
 | Source DB Lineage | `/explorer/source-database-lineage` | Report/model IDs, semantic table and partition, provider endpoint/object, fully qualified source name, gateway IDs |
+| — (new) | `/explorer/report-source-tables` | Workspace/report/dataset IDs, source account, database, schema, table name, and table/view object type — deduplicated to one row per physical table |
 | Semantic Model Objects | `/explorer/semantic-model-objects` | Tables, columns, calculated columns/tables, measures, hierarchies, DAX, types, visibility, and source paths |
 | Measure Source Lineage | `/explorer/measure-source-lineage` | Measure/calculated-object DAX, terminal semantic sources, dependency depth, physical source, and fully qualified name |
 | Report Layout | `/explorer/report-layout` | Pages, visuals, roles, fields, query references, definition counts, and visual coordinates |
-| Visual Source Lookup | `/explorer/visual-source-lookup` | Visual fields joined to semantic objects with status, confidence, reason, source path, and coordinates |
+| Visual Source Lookup | `/explorer/visual-source-lookup` | Visual fields joined to semantic objects with status, confidence, reason, source path, coordinates, and (opt-in) cross-model dataset/role |
 
 ### Unified Lineage
 

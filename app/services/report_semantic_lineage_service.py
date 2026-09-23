@@ -581,6 +581,8 @@ class _SemanticModelIndex:
                     table_name=table.name,
                     object_name=column.name,
                     source_path=(column.source_path or table.source_path),
+                    lineage_tag=column.lineage_tag,
+                    source_lineage_tag=column.source_lineage_tag,
                 )
 
                 index[

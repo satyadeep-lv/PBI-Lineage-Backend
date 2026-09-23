@@ -1,6 +1,7 @@
 import json
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from app.domain.lineage_ids import stable_lineage_id
 from app.schemas.gateway import GatewayDatasource
@@ -19,6 +20,10 @@ _DATABASE_CONNECTORS = {
     "postgresql.database": "postgresql",
     "mysql.database": "mysql",
     "oracle.database": "oracle",
+    # DirectQuery to a Power BI/AS semantic model: argument 0 is the XMLA
+    # workspace endpoint and argument 1 is the upstream model, so the same
+    # (server, database) shape as the SQL connectors above.
+    "analysisservices.database": "analysis_services",
 }
 _URL_CONNECTORS = {
     "odata.feed": "odata",
@@ -80,13 +85,47 @@ class PhysicalSourceDiscoveryService:
         sources: dict[str, PhysicalDataSource] = {}
         mappings: list[QuerySourceMapping] = []
         warnings: list[PhysicalSourceWarning] = []
+        shared_expressions = {
+            expression.name.casefold(): (expression.expression or "")
+            for expression in semantic_model.expressions
+            if expression.name
+        }
 
         for table in semantic_model.tables:
+            if not table.partitions and not table.expression:
+                # A table with no partition at all is neither a calculated
+                # table nor an importable one -- without this it would drop
+                # out of every downstream dataset with no trace at all.
+                mappings.append(
+                    QuerySourceMapping(
+                        query_id=stable_lineage_id(
+                            "query",
+                            semantic_model.workspace_id,
+                            semantic_model.semantic_model_id,
+                            table.name,
+                            "",
+                        ),
+                        semantic_table=table.name,
+                        partition_name="",
+                        source_path=table.source_path,
+                        source_ids=[],
+                    )
+                )
+
             for partition in table.partitions:
                 if (partition.source_type or "").casefold() == "calculated":
                     continue
                 expression = partition.expression or ""
-                partition_sources = self._parse_expression(expression)
+                if not expression.strip() and partition.expression_source:
+                    expression = shared_expressions.get(
+                        partition.expression_source.casefold(),
+                        "",
+                    )
+                partition_sources = self._parse_expression(
+                    expression,
+                    entity_name=partition.entity_name,
+                    schema_name=partition.schema_name,
+                )
 
                 if not partition_sources:
                     warnings.append(
@@ -141,7 +180,13 @@ class PhysicalSourceDiscoveryService:
             mapping_count=len(mappings),
         )
 
-    def _parse_expression(self, expression: str) -> list[PhysicalDataSource]:
+    def _parse_expression(
+        self,
+        expression: str,
+        *,
+        entity_name: str | None = None,
+        schema_name: str | None = None,
+    ) -> list[PhysicalDataSource]:
         navigation = self._navigation_target(expression)
         native_queries = self._native_queries(expression)
         sources: dict[str, PhysicalDataSource] = {}
@@ -157,20 +202,34 @@ class PhysicalSourceDiscoveryService:
 
                 for native_query in candidates:
                     sql_objects = _sql_objects(native_query) if native_query else []
-                    object_candidates = sql_objects or (
-                        [navigation] if navigation else [(None, None, None)]
+                    object_candidates = (
+                        [(db, schema, obj, None) for db, schema, obj in sql_objects]
+                        if sql_objects
+                        else (
+                            [navigation] if navigation else [(None, None, None, None)]
+                        )
                     )
 
                     for object_target in object_candidates:
-                        sql_database, schema_name, object_name = object_target
+                        (
+                            sql_database,
+                            target_schema,
+                            object_name,
+                            object_kind,
+                        ) = object_target
+                        # An `entity` partition carries the upstream object
+                        # name beside the connection, not inside the M.
+                        object_name = object_name or entity_name
+                        target_schema = target_schema or schema_name
                         source = self._source(
                             kind="database",
                             provider=_DATABASE_CONNECTORS[normalized_name],
                             connector=call.name,
                             server=server,
                             database=sql_database or database,
-                            schema_name=schema_name,
+                            schema_name=target_schema,
                             object_name=object_name,
+                            object_kind=object_kind,
                             warehouse=warehouse,
                             native_query=native_query,
                         )
@@ -308,7 +367,7 @@ class PhysicalSourceDiscoveryService:
     @staticmethod
     def _navigation_target(
         expression: str,
-    ) -> tuple[str | None, str | None, str] | None:
+    ) -> tuple[str | None, str | None, str, Literal["table", "view"] | None] | None:
         kind_values: dict[str, str] = {}
         for match in _KIND_NAVIGATION_PATTERN.finditer(expression):
             kind_values.setdefault(
@@ -316,13 +375,15 @@ class PhysicalSourceDiscoveryService:
                 match.group("name").replace('""', '"'),
             )
 
-        object_name = kind_values.get("table") or kind_values.get("view")
-        if object_name:
-            return (
-                kind_values.get("database"),
-                kind_values.get("schema"),
-                object_name,
-            )
+        for kind in ("table", "view"):
+            object_name = kind_values.get(kind)
+            if object_name:
+                return (
+                    kind_values.get("database"),
+                    kind_values.get("schema"),
+                    object_name,
+                    kind,
+                )
 
         match = _NAVIGATION_PATTERN.search(expression)
         if not match:
@@ -331,6 +392,7 @@ class PhysicalSourceDiscoveryService:
             None,
             match.group("schema").replace('""', '"'),
             match.group("object").replace('""', '"'),
+            None,
         )
 
     @staticmethod
@@ -359,6 +421,7 @@ class PhysicalSourceDiscoveryService:
         database: str | None = None,
         schema_name: str | None = None,
         object_name: str | None = None,
+        object_kind: Literal["table", "view"] | None = None,
         path: str | None = None,
         url: str | None = None,
         account: str | None = None,
@@ -390,6 +453,7 @@ class PhysicalSourceDiscoveryService:
             database=database,
             schema_name=schema_name,
             object_name=object_name,
+            object_kind=object_kind,
             path=path,
             url=url,
             account=account,

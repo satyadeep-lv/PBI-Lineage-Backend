@@ -10,6 +10,8 @@ from app.domain.dax_lineage import (
     physical_sources_by_table,
     terminal_dependencies,
 )
+from app.domain.lineage_ids import stable_lineage_id
+from app.domain.semantic_model_filters import exclude_auto_date_tables
 from app.schemas.dax_dependency import (
     DaxDependencyAnalysisResponse,
     DaxObjectReference,
@@ -24,6 +26,8 @@ from app.schemas.explorer import (
     MeasureSourceLineageRow,
     ReportLayoutDataset,
     ReportLayoutRow,
+    ReportSourceTableDataset,
+    ReportSourceTableRow,
     SemanticModelObjectRow,
     SemanticModelObjectsDataset,
     SourceDatabaseLineageDataset,
@@ -40,10 +44,18 @@ from app.schemas.parsed_semantic_model import ParsedSemanticModelResponse
 from app.schemas.physical_source import (
     PhysicalDataSource,
     PhysicalSourceDiscoveryResponse,
+    QuerySourceMapping,
 )
 from app.schemas.report import Report
-from app.schemas.report_semantic_lineage import ReportSemanticLineageResponse
+from app.schemas.report_semantic_lineage import (
+    ReportSemanticLineageResponse,
+    SemanticLineageObject,
+)
 from app.schemas.workspace import Workspace
+from app.services.cross_model_lineage_service import (
+    CrossModelLineageService,
+    build_lineage_tag_index,
+)
 from app.services.dax_dependency_service import DaxDependencyService
 from app.services.gateway_service import GatewayService
 from app.services.physical_source_service import PhysicalSourceDiscoveryService
@@ -59,6 +71,7 @@ from app.services.workspace_service import WorkspaceService
 
 ExplorerDatasetName = Literal[
     "source_database_lineage",
+    "report_source_tables",
     "semantic_model_objects",
     "measure_source_lineage",
     "report_layout",
@@ -66,6 +79,7 @@ ExplorerDatasetName = Literal[
 ]
 
 SOURCE_DATABASE_LINEAGE: ExplorerDatasetName = "source_database_lineage"
+REPORT_SOURCE_TABLES: ExplorerDatasetName = "report_source_tables"
 SEMANTIC_MODEL_OBJECTS: ExplorerDatasetName = "semantic_model_objects"
 MEASURE_SOURCE_LINEAGE: ExplorerDatasetName = "measure_source_lineage"
 REPORT_LAYOUT: ExplorerDatasetName = "report_layout"
@@ -74,11 +88,16 @@ VISUAL_SOURCE_LOOKUP: ExplorerDatasetName = "visual_source_lookup"
 ALL_EXPLORER_DATASETS = frozenset(
     {
         SOURCE_DATABASE_LINEAGE,
+        REPORT_SOURCE_TABLES,
         SEMANTIC_MODEL_OBJECTS,
         MEASURE_SOURCE_LINEAGE,
         REPORT_LAYOUT,
         VISUAL_SOURCE_LOOKUP,
     }
+)
+
+_UNKNOWN_SOURCE_LABEL = (
+    "Unknown Source (e.g., Local Excel File, Web Data, Dataflow, or Calculated Table)"
 )
 
 
@@ -114,6 +133,7 @@ class ExplorerService:
         ) = None,
         report_semantic_lineage_service: (ReportSemanticLineageService | None) = None,
         gateway_service: GatewayService | None = None,
+        cross_model_lineage_service: CrossModelLineageService | None = None,
         max_concurrency: int = 8,
     ) -> None:
         if max_concurrency < 1:
@@ -131,6 +151,9 @@ class ExplorerService:
             report_semantic_lineage_service or ReportSemanticLineageService()
         )
         self.gateway_service = gateway_service or GatewayService()
+        self.cross_model_lineage_service = (
+            cross_model_lineage_service or CrossModelLineageService()
+        )
         self.max_concurrency = max_concurrency
 
     async def build_snapshot(
@@ -153,13 +176,15 @@ class ExplorerService:
             requested
             & {
                 SOURCE_DATABASE_LINEAGE,
+                REPORT_SOURCE_TABLES,
                 SEMANTIC_MODEL_OBJECTS,
                 MEASURE_SOURCE_LINEAGE,
                 VISUAL_SOURCE_LOOKUP,
             }
         )
         needs_physical_sources = bool(
-            requested & {SOURCE_DATABASE_LINEAGE, MEASURE_SOURCE_LINEAGE}
+            requested
+            & {SOURCE_DATABASE_LINEAGE, REPORT_SOURCE_TABLES, MEASURE_SOURCE_LINEAGE}
         )
         needs_dax = MEASURE_SOURCE_LINEAGE in requested
 
@@ -226,26 +251,30 @@ class ExplorerService:
         ] = {}
         if needs_semantic_model:
             for selection in request.reports:
-                if selection.semantic_model_id is None:
+                # Only pre-start the fetch when the caller pinned both halves
+                # of the model's identity. Without an explicit workspace the
+                # model may live in a different one than the report (a
+                # cross-workspace binding), which is only knowable once the
+                # report itself resolves.
+                if (
+                    selection.semantic_model_id is None
+                    or selection.semantic_model_workspace_id is None
+                ):
                     continue
                 model_key = (
-                    str(
-                        selection.semantic_model_workspace_id or selection.workspace_id
-                    ),
+                    str(selection.semantic_model_workspace_id),
                     str(selection.semantic_model_id),
                 )
                 if model_key not in semantic_model_tasks:
                     semantic_model_tasks[model_key] = asyncio.create_task(
                         bounded(
-                            lambda model_key=model_key: (
-                                self.semantic_model_definition_service.get_parsed_definition(
-                                    workspace_id=model_key[0],
-                                    semantic_model_id=model_key[1],
-                                    access_token=fabric_access_token,
-                                    definition_format=(
-                                        request.semantic_model_definition_format
-                                    ),
-                                )
+                            lambda model_key=model_key: self._parsed_semantic_model(
+                                workspace_id=model_key[0],
+                                semantic_model_id=model_key[1],
+                                access_token=fabric_access_token,
+                                definition_format=(
+                                    request.semantic_model_definition_format
+                                ),
                             )
                         )
                     )
@@ -279,7 +308,7 @@ class ExplorerService:
                 report_definition,
             )
             semantic_model_workspace_id = (
-                str(selection.semantic_model_workspace_id or selection.workspace_id)
+                self._resolve_semantic_model_workspace_id(selection, report)
                 if semantic_model_id
                 else None
             )
@@ -302,15 +331,13 @@ class ExplorerService:
             if needs_semantic_model and model_key not in semantic_model_tasks:
                 semantic_model_tasks[model_key] = asyncio.create_task(
                     bounded(
-                        lambda model_key=model_key: (
-                            self.semantic_model_definition_service.get_parsed_definition(
-                                workspace_id=model_key[0],
-                                semantic_model_id=model_key[1],
-                                access_token=fabric_access_token,
-                                definition_format=(
-                                    request.semantic_model_definition_format
-                                ),
-                            )
+                        lambda model_key=model_key: self._parsed_semantic_model(
+                            workspace_id=model_key[0],
+                            semantic_model_id=model_key[1],
+                            access_token=fabric_access_token,
+                            definition_format=(
+                                request.semantic_model_definition_format
+                            ),
                         )
                     )
                 )
@@ -411,6 +438,41 @@ class ExplorerService:
                 key: task.result() for key, task in lineage_tasks.items()
             }
 
+        cross_model_index: dict[str, list[tuple[str, SemanticLineageObject]]] = {}
+        dataset_display_names: dict[str, str] = {}
+        if VISUAL_SOURCE_LOOKUP in requested and request.include_cross_model_matching:
+            primary_models = {
+                model_key[1]: semantic_model_tasks[model_key].result()
+                for model_key in self._model_keys(evidence)
+            }
+            for item in evidence:
+                if item.model_key is not None:
+                    dataset_display_names.setdefault(
+                        item.model_key[1],
+                        item.report.name,
+                    )
+
+            discovery = await self.cross_model_lineage_service.discover(
+                primary_dataset_ids=set(primary_models),
+                primary_workspace_ids={
+                    model_key[0] for model_key in self._model_keys(evidence)
+                },
+                powerbi_access_token=powerbi_access_token,
+                fabric_access_token=fabric_access_token,
+                semantic_model_definition_format=(
+                    request.semantic_model_definition_format
+                ),
+            )
+            warnings.extend(discovery.warnings)
+            for dataset_id, ref in discovery.upstream_refs.items():
+                if ref.name:
+                    dataset_display_names.setdefault(dataset_id, ref.name)
+
+            cross_model_index = build_lineage_tag_index(
+                primary_models=primary_models,
+                upstream_models=discovery.upstream_models,
+            )
+
         warnings.extend(
             self._collect_warnings(
                 evidence=evidence,
@@ -423,6 +485,11 @@ class ExplorerService:
         source_rows = (
             self._source_database_rows(evidence, physical_by_model)
             if SOURCE_DATABASE_LINEAGE in requested
+            else []
+        )
+        report_source_table_rows = (
+            self._report_source_table_rows(evidence, physical_by_model)
+            if REPORT_SOURCE_TABLES in requested
             else []
         )
         semantic_rows = (
@@ -443,7 +510,12 @@ class ExplorerService:
             self._report_layout_rows(evidence) if REPORT_LAYOUT in requested else []
         )
         visual_rows = (
-            self._visual_source_rows(evidence, lineage_by_report)
+            self._visual_source_rows(
+                evidence,
+                lineage_by_report,
+                cross_model_index=cross_model_index,
+                dataset_display_names=dataset_display_names,
+            )
             if VISUAL_SOURCE_LOOKUP in requested
             else []
         )
@@ -458,6 +530,10 @@ class ExplorerService:
             source_database_lineage=SourceDatabaseLineageDataset(
                 rows=source_rows,
                 count=len(source_rows),
+            ),
+            report_source_tables=ReportSourceTableDataset(
+                rows=report_source_table_rows,
+                count=len(report_source_table_rows),
             ),
             semantic_model_objects=SemanticModelObjectsDataset(
                 rows=semantic_rows,
@@ -476,6 +552,29 @@ class ExplorerService:
                 count=len(visual_rows),
             ),
         )
+
+    async def _parsed_semantic_model(
+        self,
+        *,
+        workspace_id: str,
+        semantic_model_id: str,
+        access_token: str,
+        definition_format: str,
+    ) -> ParsedSemanticModelResponse:
+        """Fetch a model and strip Power BI's generated Auto Date/Time tables.
+
+        Filtering here rather than per dataset keeps every explorer dataset
+        (and the physical-source and DAX analysis they are derived from)
+        consistent. The raw ``/definition/parsed`` route is left untouched so
+        it still reports the model exactly as Fabric returns it.
+        """
+        model = await self.semantic_model_definition_service.get_parsed_definition(
+            workspace_id=workspace_id,
+            semantic_model_id=semantic_model_id,
+            access_token=access_token,
+            definition_format=definition_format,
+        )
+        return exclude_auto_date_tables(model)
 
     async def _gateway_datasources(
         self,
@@ -528,6 +627,25 @@ class ExplorerService:
                 "definition analysis continued."
             ),
         )
+
+    @staticmethod
+    def _resolve_semantic_model_workspace_id(
+        selection: ExplorerReportSelection,
+        report: Report,
+    ) -> str:
+        """Where the report's semantic model actually lives.
+
+        A report and the model it binds to are not always in the same
+        workspace; Power BI reports that binding back as the report's
+        ``datasetWorkspaceId``. Falling straight back to the report's own
+        workspace (the previous behaviour) sends the Fabric definition call
+        to the wrong workspace and the model resolves as missing.
+        """
+        if selection.semantic_model_workspace_id is not None:
+            return str(selection.semantic_model_workspace_id)
+        if report.dataset_workspace_id:
+            return report.dataset_workspace_id
+        return str(selection.workspace_id)
 
     @staticmethod
     def _resolve_semantic_model_id(
@@ -687,38 +805,19 @@ class ExplorerService:
             source_by_id = {source.source_id: source for source in physical.sources}
 
             for mapping in physical.mappings:
-                for source_id in mapping.source_ids:
-                    source = source_by_id.get(source_id)
-                    if source is None:
-                        continue
-                    rows.append(
-                        SourceDatabaseLineageRow(
-                            workspace_id=item.workspace.id,
-                            workspace_name=item.workspace.name,
-                            report_id=item.report.id,
-                            report_name=item.report.name,
-                            semantic_model_workspace_id=item.model_key[0],
-                            semantic_model_id=item.model_key[1],
-                            app_name=item.selection.app_name,
-                            semantic_table=mapping.semantic_table,
-                            query_id=mapping.query_id,
-                            partition_name=mapping.partition_name,
-                            source_id=source.source_id,
-                            source_kind=source.kind,
-                            source_provider=source.provider,
-                            source_connector=source.connector,
-                            source_server=source.server,
-                            source_database=source.database,
-                            source_schema=source.schema_name,
-                            source_object_name=source.object_name,
-                            source_object_type=self._physical_object_type(source),
-                            source_fully_qualified_name=(
-                                self._physical_qualified_name(source)
-                            ),
-                            gateway_id=source.gateway_id,
-                            gateway_datasource_id=(source.gateway_datasource_id),
-                        )
-                    )
+                resolved_sources = [
+                    source_by_id[source_id]
+                    for source_id in mapping.source_ids
+                    if source_id in source_by_id
+                ]
+                if not resolved_sources:
+                    rows.append(self._source_database_row(item, mapping, source=None))
+                    continue
+
+                rows.extend(
+                    self._source_database_row(item, mapping, source=source)
+                    for source in resolved_sources
+                )
 
         return sorted(
             rows,
@@ -729,6 +828,136 @@ class ExplorerService:
                 row.partition_name.casefold(),
                 row.source_fully_qualified_name.casefold(),
                 row.source_id,
+            ),
+        )
+
+    def _source_database_row(
+        self,
+        item: _ReportEvidence,
+        mapping: QuerySourceMapping,
+        *,
+        source: PhysicalDataSource | None,
+    ) -> SourceDatabaseLineageRow:
+        if item.model_key is None:
+            raise ValueError("Source-database rows require a semantic model.")
+
+        common = {
+            "workspace_id": item.workspace.id,
+            "workspace_name": item.workspace.name,
+            "report_id": item.report.id,
+            "report_name": item.report.name,
+            "semantic_model_workspace_id": item.model_key[0],
+            "semantic_model_id": item.model_key[1],
+            "app_name": item.selection.app_name,
+            "semantic_table": mapping.semantic_table,
+            "query_id": mapping.query_id,
+            "partition_name": mapping.partition_name,
+        }
+
+        if source is None:
+            return SourceDatabaseLineageRow(
+                **common,
+                source_id=stable_lineage_id(
+                    "source",
+                    "unknown",
+                    item.model_key[0],
+                    item.model_key[1],
+                    mapping.semantic_table,
+                    mapping.partition_name,
+                ),
+                source_kind="unknown",
+                source_provider="unknown",
+                source_object_type="unknown",
+                source_fully_qualified_name=_UNKNOWN_SOURCE_LABEL,
+            )
+
+        return SourceDatabaseLineageRow(
+            **common,
+            source_id=source.source_id,
+            source_kind=source.kind,
+            source_provider=source.provider,
+            source_connector=source.connector,
+            source_server=source.server,
+            source_database=source.database,
+            source_schema=source.schema_name,
+            source_object_name=source.object_name,
+            source_object_type=self._physical_object_type(source),
+            source_fully_qualified_name=self._physical_qualified_name(source),
+            gateway_id=source.gateway_id,
+            gateway_datasource_id=source.gateway_datasource_id,
+        )
+
+    def _report_source_table_rows(
+        self,
+        evidence: list[_ReportEvidence],
+        physical_by_model: dict[tuple[str, str], PhysicalSourceDiscoveryResponse],
+    ) -> list[ReportSourceTableRow]:
+        seen: set[tuple[str, ...]] = set()
+        rows: list[ReportSourceTableRow] = []
+        for item in evidence:
+            if item.model_key is None:
+                continue
+            physical = physical_by_model[item.model_key]
+            source_by_id = {source.source_id: source for source in physical.sources}
+
+            for mapping in physical.mappings:
+                resolved_sources = [
+                    source_by_id[source_id]
+                    for source_id in mapping.source_ids
+                    if source_id in source_by_id
+                ]
+                candidate_rows = (
+                    [
+                        ReportSourceTableRow(
+                            workspace_name=item.workspace.name,
+                            report_name=item.report.name,
+                            report_id=item.report.id,
+                            semantic_model_id=item.model_key[1],
+                            source_account=source.account or source.server,
+                            source_database=source.database,
+                            source_schema=source.schema_name,
+                            table_name=(
+                                source.object_name or source.path or source.url
+                            ),
+                            source_object_type=self._physical_object_type(source),
+                        )
+                        for source in resolved_sources
+                    ]
+                    if resolved_sources
+                    else [
+                        ReportSourceTableRow(
+                            workspace_name=item.workspace.name,
+                            report_name=item.report.name,
+                            report_id=item.report.id,
+                            semantic_model_id=item.model_key[1],
+                            source_object_type="unknown",
+                        )
+                    ]
+                )
+
+                for row in candidate_rows:
+                    dedupe_key = (
+                        row.report_id,
+                        row.semantic_model_id,
+                        (row.source_account or "").casefold(),
+                        (row.source_database or "").casefold(),
+                        (row.source_schema or "").casefold(),
+                        (row.table_name or "").casefold(),
+                        row.source_object_type,
+                    )
+                    if dedupe_key in seen:
+                        continue
+                    seen.add(dedupe_key)
+                    rows.append(row)
+
+        return sorted(
+            rows,
+            key=lambda row: (
+                row.workspace_name.casefold(),
+                row.report_name.casefold(),
+                (row.source_database or "").casefold(),
+                (row.source_schema or "").casefold(),
+                (row.table_name or "").casefold(),
             ),
         )
 
@@ -1030,7 +1259,14 @@ class ExplorerService:
     def _visual_source_rows(
         evidence: list[_ReportEvidence],
         lineage_by_report: dict[tuple[str, str], ReportSemanticLineageResponse],
+        *,
+        cross_model_index: (
+            dict[str, list[tuple[str, SemanticLineageObject]]] | None
+        ) = None,
+        dataset_display_names: dict[str, str] | None = None,
     ) -> list[VisualSourceLookupRow]:
+        cross_model_index = cross_model_index or {}
+        dataset_display_names = dataset_display_names or {}
         rows: list[VisualSourceLookupRow] = []
         for item in evidence:
             definition = item.report_definition
@@ -1039,6 +1275,7 @@ class ExplorerService:
                 continue
             lineage = lineage_by_report[ExplorerService._report_key(item)]
             visual_index = ExplorerService._visual_index(definition)
+            primary_dataset_id = model_key[1]
 
             for match in lineage.field_matches:
                 visual = visual_index.get((match.page_name, match.visual_id))
@@ -1047,6 +1284,22 @@ class ExplorerService:
                 position = visual.position
                 semantic_object = match.semantic_object
                 reference = match.field_reference
+
+                (
+                    semantic_object,
+                    matched_dataset_id,
+                    matched_semantic_model,
+                    matched_model_role,
+                    match_reason,
+                ) = ExplorerService._resolve_matched_model(
+                    semantic_object=semantic_object,
+                    match_reason=match.reason,
+                    primary_dataset_id=primary_dataset_id,
+                    report_name=item.report.name,
+                    cross_model_index=cross_model_index,
+                    dataset_display_names=dataset_display_names,
+                )
+
                 rows.append(
                     VisualSourceLookupRow(
                         workspace_id=item.workspace.id,
@@ -1082,7 +1335,11 @@ class ExplorerService:
                         ),
                         match_status=match.status,
                         match_confidence=match.match_confidence,
-                        match_reason=match.reason,
+                        match_reason=match_reason,
+                        primary_dataset_id=primary_dataset_id,
+                        matched_dataset_id=matched_dataset_id,
+                        matched_semantic_model=matched_semantic_model,
+                        matched_model_role=matched_model_role,
                         visual_x=position.x if position else None,
                         visual_y=position.y if position else None,
                         visual_width=position.width if position else None,
@@ -1101,6 +1358,59 @@ class ExplorerService:
                 (row.visual_table_name or "").casefold(),
                 (row.visual_field_name or "").casefold(),
             ),
+        )
+
+    @staticmethod
+    def _resolve_matched_model(
+        *,
+        semantic_object: SemanticLineageObject | None,
+        match_reason: str | None,
+        primary_dataset_id: str,
+        report_name: str,
+        cross_model_index: dict[str, list[tuple[str, SemanticLineageObject]]],
+        dataset_display_names: dict[str, str],
+    ) -> tuple[
+        SemanticLineageObject | None,
+        str | None,
+        str | None,
+        Literal["primary", "upstream"] | None,
+        str | None,
+    ]:
+        if semantic_object is None:
+            return None, None, None, None, match_reason
+
+        matched_dataset_id = primary_dataset_id
+        matched_semantic_model = dataset_display_names.get(
+            primary_dataset_id,
+            report_name,
+        )
+        matched_model_role: Literal["primary", "upstream"] = "primary"
+
+        tag = semantic_object.source_lineage_tag
+        if tag:
+            for candidate_dataset_id, candidate_object in cross_model_index.get(
+                tag.casefold(),
+                [],
+            ):
+                if candidate_dataset_id == primary_dataset_id:
+                    continue
+                semantic_object = candidate_object
+                matched_dataset_id = candidate_dataset_id
+                matched_semantic_model = dataset_display_names.get(candidate_dataset_id)
+                matched_model_role = "upstream"
+                match_reason = (
+                    f"{match_reason}; upstream object matched by SourceLineageTag"
+                    if match_reason
+                    else "Upstream object matched by SourceLineageTag"
+                )
+                break
+
+        return (
+            semantic_object,
+            matched_dataset_id,
+            matched_semantic_model,
+            matched_model_role,
+            match_reason,
         )
 
     @staticmethod
@@ -1124,9 +1434,9 @@ class ExplorerService:
     @staticmethod
     def _physical_object_type(
         source: PhysicalDataSource,
-    ) -> Literal["table", "query", "file", "url", "endpoint", "unknown"]:
+    ) -> Literal["table", "view", "query", "file", "url", "endpoint", "unknown"]:
         if source.object_name:
-            return "table"
+            return source.object_kind or "table"
         if source.native_query:
             return "query"
         if source.path:

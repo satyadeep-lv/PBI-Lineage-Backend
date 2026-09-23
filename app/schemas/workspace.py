@@ -5,6 +5,8 @@ class Workspace(BaseModel):
     id: str
     name: str
 
+    type: str | None = None
+
     is_read_only: bool = False
     is_on_dedicated_capacity: bool = False
 

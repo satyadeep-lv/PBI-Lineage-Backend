@@ -1,10 +1,69 @@
 from app.schemas.gateway import GatewayDatasource
 from app.schemas.parsed_semantic_model import (
+    ParsedSemanticModelExpression,
     ParsedSemanticModelPartition,
     ParsedSemanticModelResponse,
     ParsedSemanticModelTable,
 )
 from app.services.physical_source_service import PhysicalSourceDiscoveryService
+
+
+def test_entity_partition_resolves_through_shared_expression():
+    model = ParsedSemanticModelResponse(
+        workspace_id="workspace-1",
+        semantic_model_id="model-1",
+        tables=[
+            ParsedSemanticModelTable(
+                name="PAYROLL_RECORDS",
+                partitions=[
+                    ParsedSemanticModelPartition(
+                        name="PAYROLL_RECORDS",
+                        source_type="entity",
+                        mode="directQuery",
+                        entity_name="PAYROLL_RECORDS",
+                        expression_source=("DirectQuery to AS - NativeQueryReoprt"),
+                    )
+                ],
+            )
+        ],
+        expressions=[
+            ParsedSemanticModelExpression(
+                name="DirectQuery to AS - NativeQueryReoprt",
+                expression=(
+                    "let\n"
+                    "Source = AnalysisServices.Database"
+                    '("powerbi://api.powerbi.com/v1.0/myorg/DEV", '
+                    '"NativeQueryReoprt"),\n'
+                    "Cubes = Table.Combine(Source[Data])\n"
+                    "in\n"
+                    "Cubes"
+                ),
+            )
+        ],
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(model)
+
+    assert result.warnings == []
+    assert result.source_count == 1
+    source = result.sources[0]
+    assert source.provider == "analysis_services"
+    assert source.server == "powerbi://api.powerbi.com/v1.0/myorg/DEV"
+    assert source.database == "NativeQueryReoprt"
+    assert source.object_name == "PAYROLL_RECORDS"
+
+
+def test_table_without_any_partition_still_yields_a_mapping():
+    model = ParsedSemanticModelResponse(
+        workspace_id="workspace-1",
+        semantic_model_id="model-1",
+        tables=[ParsedSemanticModelTable(name="Orphan")],
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(model)
+
+    assert [mapping.semantic_table for mapping in result.mappings] == ["Orphan"]
+    assert result.mappings[0].source_ids == []
 
 
 def _semantic_model(expression: str) -> ParsedSemanticModelResponse:
@@ -133,6 +192,48 @@ in
     assert source.database == "Analytics"
     assert source.schema_name == "dbo"
     assert source.object_name == "FactSales"
+    assert source.object_kind == "table"
+
+
+def test_kind_based_navigation_detects_view():
+    model = _semantic_model(
+        """
+let
+    Source = Sql.Database("sql.example.com"),
+    Database = Source{[Name="Analytics",Kind="Database"]}[Data],
+    Schema = Database{[Name="dbo",Kind="Schema"]}[Data],
+    View = Schema{[Name="VwSalesSummary",Kind="View"]}[Data]
+in
+    View
+"""
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(model)
+
+    assert result.source_count == 1
+    source = result.sources[0]
+    assert source.object_name == "VwSalesSummary"
+    assert source.object_kind == "view"
+
+
+def test_native_sql_navigation_leaves_object_kind_unresolved():
+    model = _semantic_model(
+        """
+let
+    Source = Sql.Database("sql.example.com", "warehouse"),
+    Result = Value.NativeQuery(
+        Source,
+        "SELECT * FROM Analytics.dbo.FactSales"
+    )
+in
+    Result
+"""
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(model)
+
+    assert result.source_count == 1
+    assert result.sources[0].object_kind is None
 
 
 def test_gateway_details_are_sanitized_and_matched_to_query_source():

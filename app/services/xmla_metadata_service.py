@@ -315,6 +315,11 @@ class XmlaMetadataService:
                 "lineage_tag",
                 "lineageTag",
             ),
+            source_lineage_tag=_optional_string(
+                column,
+                "source_lineage_tag",
+                "sourceLineageTag",
+            ),
         )
 
     def _map_measure(

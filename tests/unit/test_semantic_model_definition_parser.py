@@ -77,6 +77,89 @@ table Sales
     assert column.source_path == "definition/tables/Sales.tmdl"
 
 
+def test_parse_tmdl_column_lineage_tags():
+    raw = _raw_definition(
+        text="""
+table Employees
+    column EmployeeId
+        dataType: int64
+        sourceColumn: EmployeeId
+        lineageTag: 11111111-1111-1111-1111-111111111111
+        sourceLineageTag: 22222222-2222-2222-2222-222222222222
+"""
+    )
+
+    result = SemanticModelDefinitionParser().parse(raw)
+
+    column = result.tables[0].columns[0]
+
+    assert column.lineage_tag == "11111111-1111-1111-1111-111111111111"
+    assert column.source_lineage_tag == "22222222-2222-2222-2222-222222222222"
+
+
+def test_parse_tmdl_entity_partition_and_shared_expression():
+    # Fabric returns shared expressions as their own definition part, which
+    # is the only context a top-level `expression` block appears in.
+    table_text = """
+table PAYROLL_RECORDS
+    column TOTAL_PAY
+        dataType: double
+
+    partition PAYROLL_RECORDS = entity
+        mode: directQuery
+        source
+            entityName: PAYROLL_RECORDS
+            expressionSource: 'DirectQuery to AS - NativeQueryReoprt'
+"""
+    expression_text = """
+expression 'DirectQuery to AS - NativeQueryReoprt' =
+    let
+      Source = AnalysisServices.Database("powerbi://myorg/DEV", "NativeQueryReoprt"),
+      Cube = Cubes{[Id="Model", Kind="Cube"]}[Data]
+    in
+      Cube
+    lineageTag: d9167c14-8ddc-418e-af71-12f4f5562009
+
+    annotation PBI_IncludeFutureArtifacts = True
+"""
+    raw = SemanticModelDefinitionResponse(
+        workspace_id="workspace-123",
+        semantic_model_id="model-123",
+        definition=SemanticModelDefinition(
+            format="TMDL",
+            parts=[
+                SemanticModelDefinitionPart(
+                    path="definition/tables/PAYROLL_RECORDS.tmdl",
+                    payload=_encode(table_text),
+                    payload_type="InlineBase64",
+                ),
+                SemanticModelDefinitionPart(
+                    path="definition/expressions.tmdl",
+                    payload=_encode(expression_text),
+                    payload_type="InlineBase64",
+                ),
+            ],
+        ),
+    )
+
+    result = SemanticModelDefinitionParser().parse(raw)
+
+    partition = result.tables[0].partitions[0]
+    assert partition.source_type == "entity"
+    assert partition.entity_name == "PAYROLL_RECORDS"
+    assert partition.expression_source == ("DirectQuery to AS - NativeQueryReoprt")
+
+    expression = result.expressions[0]
+    assert expression.name == "DirectQuery to AS - NativeQueryReoprt"
+    assert expression.lineage_tag == "d9167c14-8ddc-418e-af71-12f4f5562009"
+    # The `Source = ...` line looks like a property assignment but is the
+    # part naming the upstream model, so it must survive verbatim.
+    assert "AnalysisServices.Database" in (expression.expression or "")
+    assert "myorg/DEV" in (expression.expression or "")
+    assert "annotation" not in (expression.expression or "")
+    assert "lineageTag" not in (expression.expression or "")
+
+
 def test_parse_tmdl_measure():
     raw = _raw_definition(
         text="""
@@ -191,6 +274,43 @@ relationship SalesCustomer
     assert relationship.from_column == "Customer Id"
     assert relationship.to_table == "Customer"
     assert relationship.to_column == "CustomerId"
+
+
+def test_parse_tmdl_auto_date_time_variation_does_not_truncate_table():
+    # Every column with Auto Date/Time enabled (the Power BI Desktop default) gets a
+    # `variation` block whose `relationship:` property line starts with the literal
+    # string "relationship" -- this must never be mistaken for a new top-level
+    # `relationship <name>` block, which would reset the parser's current table and
+    # silently drop everything declared afterward in the same file.
+    raw = _raw_definition(
+        text="""
+table 'Sales Story'
+    column ORDER_DATE
+        dataType: dateTime
+        variation Variation
+            isDefault
+            relationship: 95cf999c-ba78-491f-bfd9-d8ced9e0fe4b
+            defaultHierarchy: LocalDateTable_ae43a320.'Date Hierarchy'
+    column NET_SALES
+        dataType: double
+    measure 'Total Revenue' = SUM('Sales Story'[NET_SALES])
+    hierarchy 'Customer Hierarchy'
+        level Region
+            column: REGION
+    partition 'Sales Story' = m
+        mode: import
+        source = let X = 1 in X
+"""
+    )
+
+    result = SemanticModelDefinitionParser().parse(raw)
+
+    table = result.tables[0]
+    assert [column.name for column in table.columns] == ["ORDER_DATE", "NET_SALES"]
+    assert [measure.name for measure in table.measures] == ["Total Revenue"]
+    assert [hierarchy.name for hierarchy in table.hierarchies] == ["Customer Hierarchy"]
+    assert [partition.name for partition in table.partitions] == ["Sales Story"]
+    assert result.relationships == []
 
 
 def test_parse_tmdl_power_query_partition():

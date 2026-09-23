@@ -160,6 +160,7 @@ def _rowsets() -> dict[
                 "SummarizeBy": "Sum",
                 "IsHidden": False,
                 "LineageTag": ("amount-lineage"),
+                "SourceLineageTag": ("amount-source-lineage"),
             },
             {
                 "ID": 12,
@@ -332,6 +333,7 @@ async def test_xmla_metadata_reads_adodb_rowsets():
         "is_hidden": False,
         "description": None,
         "lineage_tag": "amount-lineage",
+        "source_lineage_tag": "amount-source-lineage",
     }
     assert sales_table["columns"][1]["sort_by_column"] == "DateKey"
     assert sales_table["measures"][0]["expression"] == "SUM(Sales[Amount])"

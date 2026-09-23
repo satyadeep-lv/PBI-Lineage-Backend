@@ -19,6 +19,8 @@ class SemanticLineageObject(BaseModel):
     source_path: str | None = None
     hierarchy_name: str | None = None
     level_name: str | None = None
+    lineage_tag: str | None = None
+    source_lineage_tag: str | None = None
 
 
 class SemanticLineageCandidate(BaseModel):

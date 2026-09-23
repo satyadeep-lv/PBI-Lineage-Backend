@@ -23,6 +23,7 @@ class ExplorerRequest(BaseModel):
         max_length=50,
     )
     include_gateway_sources: bool = False
+    include_cross_model_matching: bool = False
     report_definition_format: Literal[
         "PBIR",
         "PBIR-Legacy",
@@ -79,6 +80,7 @@ class SourceDatabaseLineageRow(BaseModel):
     source_object_name: str | None = None
     source_object_type: Literal[
         "table",
+        "view",
         "query",
         "file",
         "url",
@@ -88,6 +90,26 @@ class SourceDatabaseLineageRow(BaseModel):
     source_fully_qualified_name: str
     gateway_id: str | None = None
     gateway_datasource_id: str | None = None
+
+
+class ReportSourceTableRow(BaseModel):
+    workspace_name: str
+    report_name: str
+    report_id: str
+    semantic_model_id: str
+    source_account: str | None = None
+    source_database: str | None = None
+    source_schema: str | None = None
+    table_name: str | None = None
+    source_object_type: Literal[
+        "table",
+        "view",
+        "query",
+        "file",
+        "url",
+        "endpoint",
+        "unknown",
+    ]
 
 
 class SemanticModelObjectRow(BaseModel):
@@ -203,6 +225,10 @@ class VisualSourceLookupRow(BaseModel):
     match_status: Literal["matched", "unmatched"]
     match_confidence: float = Field(ge=0.0, le=1.0)
     match_reason: str | None = None
+    primary_dataset_id: str
+    matched_dataset_id: str | None = None
+    matched_semantic_model: str | None = None
+    matched_model_role: Literal["primary", "upstream"] | None = None
     visual_x: float | None = None
     visual_y: float | None = None
     visual_width: float | None = None
@@ -211,6 +237,11 @@ class VisualSourceLookupRow(BaseModel):
 
 class SourceDatabaseLineageDataset(BaseModel):
     rows: list[SourceDatabaseLineageRow] = Field(default_factory=list)
+    count: int = Field(default=0, ge=0)
+
+
+class ReportSourceTableDataset(BaseModel):
+    rows: list[ReportSourceTableRow] = Field(default_factory=list)
     count: int = Field(default=0, ge=0)
 
 
@@ -247,6 +278,11 @@ class SourceDatabaseLineageResponse(ExplorerResponseBase):
     count: int = Field(default=0, ge=0)
 
 
+class ReportSourceTableResponse(ExplorerResponseBase):
+    rows: list[ReportSourceTableRow] = Field(default_factory=list)
+    count: int = Field(default=0, ge=0)
+
+
 class SemanticModelObjectsResponse(ExplorerResponseBase):
     rows: list[SemanticModelObjectRow] = Field(default_factory=list)
     count: int = Field(default=0, ge=0)
@@ -269,6 +305,7 @@ class VisualSourceLookupResponse(ExplorerResponseBase):
 
 class ExplorerSnapshotResponse(ExplorerResponseBase):
     source_database_lineage: SourceDatabaseLineageDataset
+    report_source_tables: ReportSourceTableDataset
     semantic_model_objects: SemanticModelObjectsDataset
     measure_source_lineage: MeasureSourceLineageDataset
     report_layout: ReportLayoutDataset
