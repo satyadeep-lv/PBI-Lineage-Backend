@@ -265,6 +265,8 @@ LINEAGE_DATABASE_PATH=data/lineage.db
 LINEAGE_CACHE_TTL_SECONDS=30
 LINEAGE_CACHE_MAX_ENTRIES=128
 LINEAGE_SCAN_MAX_CONCURRENCY=2
+PROVIDER_READ_CACHE_TTL_SECONDS=1800
+PROVIDER_READ_CACHE_MAX_ENTRIES=512
 SNOWFLAKE_SESSION_MAX_AGE_SECONDS=2700
 SNOWFLAKE_ALLOW_EXTERNAL_BROWSER_AUTH=false
 CORS_ALLOWED_ORIGINS=[]
@@ -620,6 +622,7 @@ Request example:
   ],
   "include_gateway_sources": false,
   "include_cross_model_matching": false,
+  "resolve_cross_workspace_sources": true,
   "report_definition_format": "PBIR",
   "semantic_model_definition_format": "TMDL"
 }
@@ -643,19 +646,61 @@ omits workspaces Power BI provisions itself (`type: "AdminInsights"` — the
 the Fabric definition APIs and fail upstream on every lineage call. Every
 explorer dataset also drops Auto Date/Time tables (`LocalDateTable_<guid>`
 and `DateTableTemplate_<guid>`), which Power BI Desktop adds per date column
-and which can easily outnumber the real tables. The filter is applied once to
-the parsed model, so the physical-source and DAX analysis derived from it stay
-consistent; the raw `/semantic-models/{id}/definition/parsed` route still
-reports the model exactly as Fabric returns it.
+and which can easily outnumber the real tables — one demo model was 7 Auto
+Date/Time tables to 1 real one, and its DAX graph was 49 of 71 objects and 48
+of 81 dependencies of pure noise.
+
+The same filter applies to the model-level routes a client is likely to call
+directly:
+
+```text
+POST /workspaces/{ws}/semantic-models/{id}/definition/parsed
+POST /lineage/dax/analyze
+GET  /workspaces/{ws}/semantic-models/{id}/metadata
+```
+
+All three exclude Auto Date/Time tables **by default**. Pass
+`?includeAutoDateTables=true` to get the unfiltered view — useful when
+debugging a model, and the only way to see what Fabric actually returned. For
+`/metadata` the filter is applied to the TMDL and XMLA sides *before*
+reconciliation, so the match list is computed from the same tables you are
+shown and the `*_count` fields stay consistent with the rows.
 
 A table bound with DirectQuery to another semantic model has no inline Power
 Query — TMDL records it as an `entity` partition (`entityName` +
 `expressionSource`) pointing at a model-level shared `expression`. Those are
 resolved: the shared expression's `AnalysisServices.Database(<xmla endpoint>,
-<model>)` call becomes a source with `provider: "analysis_services"`, the
-workspace endpoint as its server, the upstream model as its database, and the
-partition's `entityName` as the object — so a cross-workspace composite table
-reports where it actually reads from instead of "unknown".
+<model>)` call identifies the upstream workspace and model, and the
+partition's `entityName` the table inside it.
+
+That hop is then **followed through to the real database**. Reporting a
+composite table as living in "Power BI workspace: DEV" is not an answer to
+"which database does this report read from?" — it just moves the question. So
+`resolve_cross_workspace_sources` (default `true`) resolves the XMLA endpoint
+to a workspace, finds the upstream semantic model by name inside it, reads
+*its* TMDL, and reports the physical source behind the upstream table. A
+composite table backed by `DEV / NativeQueryReoprt` therefore reports the
+Snowflake account, database, schema and table it ultimately reads, with the
+hop preserved on `via_workspace_name` / `via_semantic_model_name` /
+`via_semantic_table` (and `via_workspace_id` / `via_semantic_model_id` on
+`/source-database-lineage`) so the cross-workspace nature stays visible.
+
+The upstream table is matched by `sourceLineageTag` → upstream `lineageTag`
+first, falling back to the partition's `entityName`; the tag survives a rename
+on either side, the name does not. Upstream models are fetched once per
+request however many tables point at them, and a model that is itself
+composite is followed in turn (up to `max_depth`, default 3, with cycle
+detection). When the upstream workspace is not visible to the signed-in user,
+the model is missing, or its definition cannot be read, the row keeps the
+`analysis_services` hop it had before and the response carries a
+`CROSS_WORKSPACE_*` warning — a partial answer still says where to look, so
+nothing is dropped. Set `resolve_cross_workspace_sources: false` to stop at
+the Power BI boundary (it costs one workspace list, one model list and one
+definition fetch per distinct upstream model).
+
+Note that this is unrelated to `include_cross_model_matching`, which is about
+`/visual-source-lookup` and needs an Admin API scan; cross-workspace source
+resolution uses only the caller's own read access.
 
 `/source-database-lineage` and `/report-source-tables` always emit one row per
 semantic table, even when no physical source could be resolved (a calculated
@@ -691,6 +736,66 @@ scoped to the primary dataset's own workspace(s) plus whatever upstream
 workspace(s) the scan reports — it does not chase upstream-of-upstream
 chains beyond that first hop.
 
+### Cost of an explorer call
+
+Explorer endpoints are network-bound — parsing and source discovery for a
+real model measure in single-digit milliseconds, while every upstream call is
+a round trip to Power BI or Fabric. Three things keep that cost down:
+
+- **One pooled HTTP client** for all Power BI/Fabric/scanner traffic
+  (`app/clients/provider_http_client.py`). Each call used to build its own
+  `httpx.AsyncClient`, paying a fresh DNS lookup, TCP connect and TLS
+  handshake against the same two hosts — including on every poll of a
+  long-running `getDefinition`. The client is created lazily and closed in the
+  app lifespan.
+- **A session-scoped cache for provider reads**
+  (`app/services/provider_read_cache.py`). Moving between screens re-asks
+  Power BI and Fabric for the same workspaces, reports and definitions; those
+  reads are idempotent and change rarely within a sitting, so they are served
+  from memory for the rest of the session.
+
+  Entries are keyed by a SHA-256 fingerprint of the caller's access token and
+  are **never replayed to a different token** — two principals can have very
+  different access to the same object. Because a session's token does not
+  rotate silently (it expires and the user re-authenticates), that fingerprint
+  is stable for the life of a session, which makes this a session cache
+  without threading a session ID through every endpoint. Concurrent callers
+  for the same read share a single request ("single flight"). **Failures are
+  never cached**, so a permission that has just been granted takes effect on
+  the next attempt.
+
+  Caching is **opt-in per call site**, not automatic on every GET: polling a
+  long-running operation or validating a connection must always reach the
+  provider, and a cached "still running" would never resolve. Cached:
+  workspaces, reports, semantic model lists, gateways, report pages, and the
+  two expensive Fabric `getDefinition` long-running operations. Not cached:
+  `validate_connection`, `modified` workspaces, and every scan/operation poll.
+
+  **Trade-off:** a report or model edited in Power BI can take up to
+  `PROVIDER_READ_CACHE_TTL_SECONDS` (default 1800 — one sitting) to appear.
+  `DELETE /api/v1/cache` clears the caller's own entries and is what a
+  "Refresh" control should call; `GET /api/v1/cache` reports the current size.
+  Set the TTL to `0` to disable caching entirely.
+
+  Memory is bounded by `PROVIDER_READ_CACHE_MAX_ENTRIES` (default 512, LRU).
+  Semantic model definitions are much the largest entries — 19-71 KB each on
+  a representative tenant — so the cap is what keeps a long session from
+  growing without limit.
+- **Cross-workspace resolution runs concurrently** across models, with each
+  distinct upstream model fetched once however many tables reference it.
+
+Measured against the real `POC / sales` model (composite, 11 source rows),
+walking four screens in one session — source tables, semantic objects,
+measure lineage, then back to source tables:
+
+```
+cache off   6 + 3 + 6 + 6  =  21 upstream calls
+cache on    6 + 0 + 0 + 0  =   6 upstream calls
+```
+
+The first screen pays for the session; every screen after it, including
+revisiting one, costs nothing.
+
 `/report-source-tables` returns the distinct physical database tables/views a
 report ultimately reads from — one row per (workspace, report, physical
 table), not one row per semantic table/partition/query mapping. Use it when
@@ -711,7 +816,16 @@ cannot be determined from static text. Not every source is a database object:
 for a file-, folder- or URL-backed table there is no account/database/schema
 to report, so `table_name` falls back to the file path or URL and
 `source_object_type` is `file`/`url` — the row still identifies what the table
-reads from instead of being four nulls.
+reads from instead of being four nulls. Rows reached through a composite model
+additionally carry `via_workspace_name`, `via_semantic_model_name` and
+`via_semantic_table`; they are `null` for a table that reads its database
+directly.
+
+One connector needs care: `Snowflake.Databases(server, warehouse)` takes the
+**warehouse** as its second positional argument, not a database. The database
+comes from the `Kind="Database"` navigation step (or from a three-part name in
+a native query), so a table whose native query uses a two-part name reports the
+navigated database rather than the warehouse.
 
 Legacy screen mapping:
 
@@ -723,6 +837,19 @@ Legacy screen mapping:
 | Measure Source Lineage | `/explorer/measure-source-lineage` | Measure/calculated-object DAX, terminal semantic sources, dependency depth, physical source, and fully qualified name |
 | Report Layout | `/explorer/report-layout` | Pages, visuals, roles, fields, query references, definition counts, and visual coordinates |
 | Visual Source Lookup | `/explorer/visual-source-lookup` | Visual fields joined to semantic objects with status, confidence, reason, source path, coordinates, and (opt-in) cross-model dataset/role |
+
+### Session Cache
+
+```text
+GET    /api/v1/cache
+DELETE /api/v1/cache
+```
+
+Power BI and Fabric reads are cached per signed-in session (see "Cost of an
+explorer call"). `GET` reports `{enabled, ttl_seconds, max_entries,
+entry_count}`; `DELETE` drops **only the calling session's** entries and is
+what a "Refresh" control should call. Both require the same authenticated
+Power BI session as every other route.
 
 ### Unified Lineage
 
@@ -884,8 +1011,51 @@ frontier are queried concurrently up to `max_concurrency`. Stable IDs, visited
 roots, and edge deduplication prevent repeated work and cycles. `max_depth`,
 `max_nodes`, `max_edges`, and `max_queries` bound each request. A failed root
 query fails the request; a failed deeper branch returns the partial snapshot
-with `truncated=true` and a `SNOWFLAKE_LINEAGE_BRANCH_FAILED` warning. Returned
+with `truncated=true` and a `SNOWFLAKE_LINEAGE_BRANCH_FAILED` warning whose
+message carries the reason Snowflake gave, so a branch that failed on
+permissions can be told apart from one whose object was dropped. Returned
 `PROCESS` evidence is retained when `include_process=true`.
+
+Re-rooting is column-aware. In a column-level result `OBJECT_DOMAIN` is the
+domain of the object *holding* the column (`TABLE`, `VIEW`), not `COLUMN`, so
+the boundary is re-queried as `COLUMN` with the four-part name; passing the
+container's domain with that name makes Snowflake read the whole string as an
+object and fail with "does not exist or not authorized". Views are traversed
+like tables. A boundary that genuinely cannot be re-rooted (a stage, a
+dataset) is reported with `SNOWFLAKE_LINEAGE_BOUNDARY_SKIPPED` instead of
+being dropped. A column's identity is its container plus its name, so the
+requested root and the same column as Snowflake reports it are one node rather
+than two.
+
+Memory is bounded by the request's own limits, not by the size of the graph
+being walked, so a deep recursion cannot grow without end:
+
+- `nodes` and `edges` stop at `max_nodes`/`max_edges`, and a frontier root is
+  only queued once its node was accepted, so the frontier inherits the same
+  ceiling.
+- Frontier queries are submitted in bounded chunks. A finished future holds
+  its rows until they are read, so submitting a whole wide frontier at once
+  kept every query's result set alive simultaneously; chunking caps that at
+  `max_concurrency * 2` result sets.
+- Warnings are deduplicated as they are raised rather than at the end, and
+  capped. Row-level warnings are emitted per bad row, so a wide traversal
+  could otherwise build a warning list larger than the lineage it described.
+  On overflow a single `SNOWFLAKE_LINEAGE_WARNINGS_TRUNCATED` entry is added.
+- `visited_roots` holds one ID per queried root, so it is bounded by
+  `max_queries`.
+
+Measured on a synthetic fan-out graph with `max_nodes=5000`,
+`max_concurrency=32`: peak **65.6 MB → 22.5 MB** for byte-identical output.
+Peak tracks the caps (500/1000/2000/5000 nodes → 2.8/4.6/8.4/19.9 MB) rather
+than the graph, and is now near-flat in `max_concurrency` (1/8/32 workers →
+19.4/19.9/22.5 MB).
+
+Branch isolation covers **any** exception from the upstream call, not only
+`AppException`. This matters because the first frontier is a single root
+queried on its own thread, so nothing past level five ran concurrently until
+the second wave — and a raw connector exception raised there (notably from
+opening a cursor on a connection that has dropped) used to escape the handler
+and fail the whole request, discarding the five levels already traced.
 
 This ports the supplied procedure's recursive five-level traversal into the
 service and supports both table and column roots. It does not create or call
@@ -1027,6 +1197,7 @@ paths remain the definition evidence; XMLA provides runtime metadata.
 
 ```text
 GET  /api/v1/ai/status
+POST /api/v1/ai/explain
 POST /api/v1/ai/chat
 POST /api/v1/ai/chat/stream
 ```
@@ -1061,11 +1232,29 @@ rejected identically to a nonexistent one. The response is:
   "answer": "...",
   "claims": [{"text": "...", "evidence_ids": ["E1", "E2"]}],
   "evidence": [{"evidence_id": "E1", "object_type": "measure", "fact_type": "definition", "source_type": "tmdl", "value": "...", "verification_status": "verified", "...": "..."}],
-  "agent": "measure_agent",
+  "agent": "tool_loop",
   "suggested_questions": ["..."],
+  "tool_trace": [{"round": 1, "tool": "explain_object", "arguments": {"object_name": "Total Revenue"}, "evidence_count": 8, "duration_ms": 3, "status": "completed"}],
   "usage": {"provider": "...", "model": "...", "tokens": 0}
 }
 ```
+
+Evidence for a measure or calculated column carries a `plain_language`
+line — a deterministic, structural reading of the DAX
+("Average Order Value divides Total Revenue by Orders"), produced by
+`app/ai/composition/dax_narrator.py`. It never guesses business meaning, and
+an expression it cannot recognise degrades to naming the fields the
+expression reads. It is deliberately **not** a model call, so the
+plain-language line cannot disappear when no provider is reachable.
+
+Dependencies are reported at two levels rather than one flat list: semantic
+objects (measures, columns, tables) keep `fact_type: "dependency"` while the
+databases behind them are `fact_type: "source"` — rendered as "Depends on
+(semantic model)" and "Reads from (database)". Each item's `value` also
+carries the graph node's `properties`, so database/schema/table detail and a
+visual's page/type do not have to be parsed back out of a qualified name. A
+visual in downstream impact is named the way a report author would recognise
+it ("Margin Card (card) on page 'Overview'"), not by its GUID.
 
 `status` is one of `answered`, `insufficient_evidence`, `ambiguous`,
 `conflicting_evidence`, or `out_of_scope`. Only `answered` ever has a
@@ -1075,18 +1264,53 @@ citation-backed answer; `evidence` is always populated when evidence
 exists, independent of whether the model was used, so the frontend can show
 its own evidence view even on a fallback answer.
 
-Pipeline: `AIContextResolver` (validate + fetch) → `Supervisor`
-(deterministic keyword/object-type routing into
-`measure_agent`/`report_agent`/`impact_agent` — an LLM router is not needed
-yet since every intent this phase implements routes deterministically) →
-agent (calls a small set of registered, read-only tools —
-`app/ai/tools/registry.py` — that wrap `SemanticModelDefinitionService`,
-`LineageGraphService`, `ImpactAnalysisService`,
-`LineageNavigationService`/`LineageSearchService`,
-`ReportDefinitionService`/`ReportSemanticLineageService`,
-`PhysicalSourceDiscoveryService`; no lineage algorithm is reimplemented) →
-`EvidenceBundle`. If `can_answer` is false, the response is rendered
-directly from the bundle and the model is skipped entirely. Otherwise the
+`POST /ai/explain` takes the **same request and response shape as
+`/ai/chat`** but answers purely from gathered evidence: it never calls a
+model, and it is deliberately **not** gated on `AI_ENABLED`. Use it for a
+measure/column detail panel — a factual lineage answer should not depend on
+an LLM being configured, credited, or reachable. `usage` is always `null`.
+
+#### How a question is answered
+
+There are two routes to an answer, tried in order.
+
+**1. Tool-calling loop (preferred).** `app/ai/orchestration/tool_loop.py`
+publishes the read-only tools that are actually available for the current
+context and lets the model choose which to call, over at most
+`MAX_TOOL_ROUNDS` (4) rounds. This is what lets an open question be answered
+from evidence the caller never explicitly selected — for example "how is
+return rate worked out?" resolves by calling `search_model`, then
+`explain_object`. Tools take arguments, so an object the UI never resolved
+can still be named; name resolution happens strictly inside the already-
+authorized `ResolvedAIContext`, so naming an object the caller cannot see
+returns no evidence rather than widening access. Only tools whose required
+context is present are offered at all, so the model cannot pick a call that
+could only return nothing. Identical repeated calls are rejected (that is
+how a loop otherwise burns its whole round budget) and tool results are
+truncated at `MAX_TOOL_RESULT_CHARS`.
+
+Every call is recorded and returned on `tool_trace`
+(`{round, tool, arguments, evidence_count, duration_ms, status}`), so an
+answer audits back to the deterministic calls that produced it. **An answer
+with no tool evidence behind it is discarded** — the loop's output is only
+used when it both answered *and* gathered evidence, so a model answering
+from memory can never reach the caller.
+
+**2. Fixed routing (fallback).** Whenever the loop cannot run or does not
+produce evidence — no provider configured, provider unreachable, no tools
+for this context — `Supervisor` routes deterministically on keywords and the
+client-declared object type into `measure_agent`/`report_agent`/
+`impact_agent`/`semantic_model_agent`. Inventory and orientation questions
+("what measures are there", "what am I looking at") route to
+`semantic_model_agent` ahead of the object-type hint, so they are not
+mistaken for "explain this one measure". When the chosen agent cannot
+resolve the specific object asked about, the Supervisor answers with what
+*is* known about the model in view and keeps the original "could not
+resolve" note in `missing_information`, rather than stopping at a dead end.
+
+Both routes end at an `EvidenceBundle`. If `can_answer` is false, the
+response is rendered directly from the bundle and the model is skipped
+entirely. Otherwise the
 `GroundedComposer` asks the model for a structured `{summary, claims}` JSON
 object citing evidence IDs (via `ModelGateway.generate()` — no
 provider-specific structured-output feature, so this works identically for
@@ -1117,13 +1341,24 @@ and LiteLLM itself is imported lazily (only when a real provider is
 actually used) so the application's startup, `/ai/status`, and the default
 `fake` provider never depend on it being importable.
 
-Known limitations in this phase: conversation history is not yet persisted,
-so cross-turn pronoun resolution ("what depends on *that* measure") is not
-implemented — each request is resolved independently; intent routing is
-deterministic only (no LLM fallback router, since nothing implemented yet
-needs one); Snowflake-backed evidence tools are not included; a standing
-evaluation-fixture suite is not included (covered instead by the unit/API
-tests under `tests/unit/test_ai_*.py`).
+Known limitations: conversation history is not yet persisted, so cross-turn
+pronoun resolution ("what depends on *that* measure") is not implemented —
+each request is resolved independently. Tools are scoped to the semantic
+model and report already in context, so estate-wide questions ("how many
+reports do we have across the tenant") answer from the model in view rather
+than a workspace inventory; widening that means extending
+`AIContextResolver` to fetch the workspace report list. Snowflake-backed
+evidence tools are not exposed to the loop. Multi-agent orchestration,
+managed agents, and token-budget/cost accounting are not implemented. A
+standing evaluation-fixture suite is not included (covered instead by the
+unit tests under `tests/unit/test_ai_*.py`, `test_tool_loop.py` and
+`test_dax_narrator.py`).
+
+**The tool loop has not yet run against a live model.** The development host
+cannot reach `api.anthropic.com`, so it is exercised end-to-end only by a
+scripted gateway in `tests/unit/test_tool_loop.py`; the provider wiring
+(`_as_provider_message`/`_as_tool_calls`) is the part most likely to need
+adjustment on the first real call.
 
 ## Folder Structure
 
@@ -1186,7 +1421,7 @@ FastAPI routing layer.
 
 - `app/api/router.py`
   - Combines all v1 routers under health, Microsoft/Snowflake auth, workspaces,
-    reports, gateways, scanner, explorer, and lineage.
+    reports, gateways, cache, scanner, explorer, lineage, and AI.
 - `app/api/v1/health.py`
   - Health, liveness, and readiness endpoints.
 - `app/api/v1/auth.py`
@@ -1211,6 +1446,9 @@ FastAPI routing layer.
   - My workspace Power BI report-detail endpoint.
 - `app/api/v1/gateways.py`
   - Gateway discovery plus gateway datasource list/detail endpoints.
+- `app/api/v1/cache.py`
+  - Session read-cache status and a per-session clear, which is what a
+    frontend "Refresh" control calls.
 - `app/api/v1/explorer.py`
   - Combined and focused frontend-ready explorer data endpoints.
 - `app/api/v1/lineage.py`
@@ -1218,7 +1456,8 @@ FastAPI routing layer.
     and live graph, deep Snowflake table/column tracing, impact, search,
     navigation, versioning, validation, estate, and scan-job endpoints.
 - `app/api/v1/ai.py`
-  - Power AI status and chat endpoints. Router-level lineage-admin-key gate
+  - Power AI status, evidence-only explain, and chat endpoints. Router-level
+    lineage-admin-key gate
     plus per-route authenticated Power BI session, matching every other
     subsystem's auth conventions.
 - `app/api/dependencies/credentials.py`
@@ -1241,17 +1480,21 @@ imported outside `providers/litellm_gateway.py`.
     (`answered`/`insufficient_evidence`/`ambiguous`/`conflicting_evidence`/`out_of_scope`),
     `VerificationStatus`, `AIIntent`.
 - `app/ai/models/messages.py`, `requests.py`
-  - Provider-neutral `ModelMessage`/`ModelRequest` plus the public
+  - Provider-neutral `ModelMessage`/`ModelToolCall`/`ModelRequest` (including
+    the JSON-Schema `tools` a model may call) plus the public
     `AIChatRequest`/`AIChatContext` API contract.
 - `app/ai/models/responses.py`
-  - Provider-neutral `ModelResponse`/`ModelChunk`/`TokenUsage`, plus the
-    public `AIStatusResponse`/`AIUsage`/`AIChatResponse`
-    (`status`/`claims`/`evidence`/`agent`/`suggested_questions`/`usage`).
+  - Provider-neutral `ModelResponse` (including any `tool_calls` the model
+    requested)/`ModelChunk`/`TokenUsage`, plus the public
+    `AIStatusResponse`/`AIUsage`/`AIToolCall`/`AIChatResponse`
+    (`status`/`claims`/`evidence`/`agent`/`suggested_questions`/
+    `tool_trace`/`usage`).
 - `app/ai/models/context.py`
   - `ResolvedObject`/`ResolvedAIContext` — the access-checked, evidence-
     carrying context every tool/agent reads from instead of raw client input.
 - `app/ai/models/evidence.py`
-  - `EvidenceItem` (one fact traced to one deterministic call),
+  - `EvidenceItem` (one fact traced to one deterministic call, with an
+    optional deterministic `plain_language` restatement),
     `EvidenceConflict`, `EvidenceBundle`, `GroundedClaim`.
 - `app/ai/context/resolver.py`
   - `AIContextResolver`: validates workspace/report/semantic-model access
@@ -1262,22 +1505,42 @@ imported outside `providers/litellm_gateway.py`.
     `build_lineage_graph`, the single call site every tool shares.
 - `app/ai/tools/`
   - `base.py` (`Tool` dataclass — explicit name/description/required-context/
-    handler, no dynamic dispatch), `registry.py` (`TOOL_REGISTRY`),
+    JSON-Schema parameters/handler, no dynamic dispatch, so a tool name from
+    a model can never reach arbitrary code), `registry.py` (`TOOL_REGISTRY`
+    plus `tool_schemas(context)`, which offers only the tools whose required
+    context is present), `agent_tools.py` (argument-taking wrappers that
+    re-point the context at a *named* object, resolved strictly inside the
+    already-authorized `ResolvedAIContext`), and the underlying
     `measure_tools.py`, `report_tools.py`, `lineage_tools.py`,
     `impact_tools.py` — thin adapters over
     `SemanticModelDefinitionService`/`LineageGraphService`/
     `ImpactAnalysisService`/`LineageNavigationService`/
     `ReportSemanticLineageService`/`PhysicalSourceDiscoveryService`,
     returning `EvidenceItem`s only.
+- `app/ai/orchestration/tool_loop.py`
+  - The preferred answer path: a bounded, auditable loop that lets the model
+    choose which read-only tools to call. Hard round limit, result
+    truncation, rejection of identical repeated calls, and a
+    `ToolCallRecord` per call. Raises `ToolLoopUnavailableError` when no
+    tools apply, so the caller falls back rather than failing.
 - `app/ai/orchestration/intent.py`, `supervisor.py`
-  - Deterministic keyword/object-type intent classification and the
-    `Supervisor` that picks one agent from it — no model call.
-- `app/ai/agents/measure_agent.py`, `report_agent.py`, `impact_agent.py`
+  - The fallback path: deterministic keyword/object-type intent
+    classification (inventory and orientation phrasing checked ahead of the
+    object-type hint) and the `Supervisor` that picks one agent from it — no
+    model call. When that agent cannot resolve the object asked about, the
+    Supervisor falls back to the model overview rather than a dead end.
+- `app/ai/agents/measure_agent.py`, `report_agent.py`, `impact_agent.py`,
+  `semantic_model_agent.py`
   - Each calls a small, fixed set of tools and assembles one
     `EvidenceBundle`, including the measure agent's TMDL-vs-XMLA conflict
     check (opt-in — only runs when XMLA metadata is explicitly supplied).
+    `semantic_model_agent` answers "what is here" rather than "explain this
+    one object", and needs nothing resolved first.
 - `app/ai/composition/`
-  - `persona.py` (presentation-only per-audience hints), `grounded_composer.py`
+  - `dax_narrator.py` (deterministic plain-language reading of a DAX
+    expression — structural only, never a model call, degrades to naming the
+    fields it reads), `persona.py` (presentation-only per-audience hints),
+    `grounded_composer.py`
     (prompt-based structured JSON via `ModelGateway.generate()`, Pydantic-
     validated — no provider-specific structured output), `grounding_validator.py`
     (`GroundedResponseValidator` — every claim must cite an evidence id that
@@ -1302,10 +1565,13 @@ imported outside `providers/litellm_gateway.py`.
   - Builds the configured gateway from `Settings` and reports (without ever
     returning it) whether a credential is present for the selected provider.
 - `app/ai/services/ai_service.py`
-  - Orchestrates the whole pipeline: resolver → supervisor/agent → no-
-    evidence gate (skips the model entirely when evidence is insufficient)
-    → grounded composer → validator → deterministic fallback. Emits
-    structured logs and grounding metrics at each stage.
+  - Orchestrates the whole pipeline: resolver → tool loop (discarded unless
+    it both answered and gathered evidence) → supervisor/agent → no-evidence
+    gate (skips the model entirely when evidence is insufficient) → grounded
+    composer → validator → deterministic fallback. `explain()` stops after
+    the evidence and renders deterministically, which is what
+    `POST /ai/explain` serves. Emits structured logs and grounding metrics at
+    each stage.
 - `app/ai/services/streaming.py`
   - SSE event generator for `/ai/chat/stream`; runs the same pipeline to a
     fully validated response before emitting anything.
@@ -1445,8 +1711,17 @@ Pydantic API contracts.
 
 Business logic layer. Routes call services; services call clients.
 
+- `provider_read_cache.py`
+  - Session-scoped cache for repeated Power BI/Fabric reads, keyed by a
+    fingerprint of the caller's token so an entry is never replayed to a
+    different principal. Single-flight; failures are never cached.
+- `cross_workspace_source_resolver.py`
+  - Follows a composite model's `AnalysisServices.Database(...)` hop into the
+    workspace it points at and reports the database behind it, instead of
+    stopping at the Power BI boundary.
 - `workspace_service.py`
-  - Maps Power BI workspace payloads.
+  - Maps Power BI workspace payloads, dropping Power BI's own
+    `AdminInsights` workspace (matched on type, not display name).
 - `report_service.py`
   - Maps workspace-scoped and My workspace Power BI reports, plus pages.
 - `gateway_service.py`
@@ -1560,7 +1835,9 @@ Business logic layer. Routes call services; services call clients.
 Automated tests.
 
 - `tests/conftest.py`
-  - FastAPI test client fixture.
+  - FastAPI test client fixture, plus an autouse reset of the process-global
+    provider read cache (without it, one test's cached response answers the
+    next test's call).
 - `tests/api/test_auth.py`
   - Device auth plus browser SSO login/callback, state, redirect, cookie, and
     provider-status behavior.
@@ -1750,6 +2027,15 @@ are post-phase extensions and do not renumber the roadmap. They strengthen
 original Phase 2 authentication, Phase 6 physical-source mapping, and Phase 9
 estate discovery while retaining the rule that source evidence is preserved
 rather than silently overwritten.
+
+Subsequent post-phase work, all documented in
+[`Docs/CONTEXT.md`](Docs/CONTEXT.md) with the evidence behind each change:
+cross-workspace source resolution through composite models; a session-scoped
+provider read cache; Snowflake deep lineage past its five-level query cap;
+Auto Date/Time filtering across the frontend's three routes; and the Power AI
+work — `POST /ai/explain`, deterministic plain-language DAX narration,
+layered semantic/database dependencies, and the tool-calling agent loop
+ported from the reference Streamlit app.
 
 ### Next Phase
 

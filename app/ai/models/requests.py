@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.ai.models.enums import AudienceType
@@ -12,6 +14,11 @@ class ModelRequest(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     timeout_seconds: float | None = None
+
+    # JSON-Schema tool definitions the model may call, and an optional
+    # nudge to force a tool on the first round.
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    require_tool: bool = False
 
 
 class AIChatContext(BaseModel):

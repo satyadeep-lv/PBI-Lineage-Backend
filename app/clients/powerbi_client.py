@@ -87,6 +87,7 @@ class PowerBIClient:
                 "$top": top,
                 "$skip": skip,
             },
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -101,6 +102,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_object_response(response)
@@ -115,6 +117,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}/reports"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -129,6 +132,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}/datasets"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -144,6 +148,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}/reports/{report_id}"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_object_response(response)
@@ -159,6 +164,7 @@ class PowerBIClient:
             url=(f"{self.BASE_URL}/reports/{report_id}"),
             access_token=access_token,
             not_found_resource="report",
+            cacheable=True,
         )
 
         return self._parse_object_response(response)
@@ -172,6 +178,7 @@ class PowerBIClient:
             provider="powerbi",
             url=f"{self.BASE_URL}/gateways",
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -188,6 +195,7 @@ class PowerBIClient:
             url=(f"{self.BASE_URL}/gateways/{gateway_id}/datasources/{datasource_id}"),
             access_token=access_token,
             not_found_resource="gateway datasource",
+            cacheable=True,
         )
 
         return self._parse_object_response(response)
@@ -202,6 +210,7 @@ class PowerBIClient:
             provider="powerbi",
             url=f"{self.BASE_URL}/gateways/{gateway_id}/datasources",
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -294,6 +303,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}/reports/{report_id}/pages"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -315,6 +325,7 @@ class PowerBIClient:
                 f"{page_name}"
             ),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_object_response(response)

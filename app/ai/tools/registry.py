@@ -1,87 +1,144 @@
-from app.ai.tools import impact_tools, lineage_tools, measure_tools, report_tools
+"""The read-only tools a model may call, and nothing else.
+
+Modelled on the reference implementation's agent tool set: a small number of
+broad, self-describing capabilities the model chooses between, rather than a
+single intent guessed from keywords. Every tool is read-only and bounded to
+the caller's already-authorized context.
+"""
+
+from app.ai.tools import agent_tools
 from app.ai.tools.base import Tool
+
+_OBJECT_NAME = {
+    "type": "string",
+    "description": (
+        "Name of a measure, column or table in the semantic model in "
+        "context. Omit to use the object the user currently has selected."
+    ),
+}
+_TABLE_NAME = {
+    "type": "string",
+    "description": "Table to disambiguate with, when the name is not unique.",
+}
+
+
+def _schema(properties: dict, required: list[str] | None = None) -> dict:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required or [],
+        "additionalProperties": False,
+    }
+
 
 _TOOLS: tuple[Tool, ...] = (
     Tool(
-        name="measure.definition",
+        name="explain_object",
         description=(
-            "Retrieve the exact DAX definition of the resolved measure from TMDL."
-        ),
-        requires_context=frozenset({"semantic_model", "resolved_object"}),
-        handler=measure_tools.get_measure_definition,
-    ),
-    Tool(
-        name="column.definition",
-        description=(
-            "Retrieve the exact DAX definition of the resolved calculated "
-            "column from TMDL."
-        ),
-        requires_context=frozenset({"semantic_model", "resolved_object"}),
-        handler=measure_tools.get_calculated_column_definition,
-    ),
-    Tool(
-        name="report.summary",
-        description=(
-            "Retrieve report format, page/visual counts, and semantic model reference."
-        ),
-        requires_context=frozenset({"report_definition"}),
-        handler=report_tools.get_report_summary,
-    ),
-    Tool(
-        name="report.pages",
-        description="Retrieve report page metadata.",
-        requires_context=frozenset({"report_definition"}),
-        handler=report_tools.get_report_pages,
-    ),
-    Tool(
-        name="report.visuals",
-        description="Retrieve report visuals and the semantic fields they use.",
-        requires_context=frozenset({"report_definition"}),
-        handler=report_tools.get_report_visuals,
-    ),
-    Tool(
-        name="semantic_model.details",
-        description=(
-            "Retrieve semantic model table/column/measure counts and table names."
+            "Explain one measure or calculated column: its exact DAX, a "
+            "plain-language reading of it, the semantic objects and database "
+            "tables it reads from, and what downstream depends on it. Use "
+            "this for any 'what is X', 'explain X' or 'how is X calculated' "
+            "question."
         ),
         requires_context=frozenset({"semantic_model"}),
-        handler=lineage_tools.get_semantic_model_details,
+        handler=agent_tools.explain_object,
+        parameters=_schema({"object_name": _OBJECT_NAME, "table_name": _TABLE_NAME}),
     ),
     Tool(
-        name="source.physical",
+        name="object_lineage",
         description=(
-            "Retrieve the physical data sources detected for the semantic model."
+            "Trace what an object reads from (upstream) or what would break "
+            "if it changed (downstream). Use for impact and dependency "
+            "questions."
         ),
         requires_context=frozenset({"semantic_model"}),
-        handler=lineage_tools.get_physical_sources,
+        handler=agent_tools.object_lineage,
+        parameters=_schema(
+            {
+                "object_name": _OBJECT_NAME,
+                "table_name": _TABLE_NAME,
+                "direction": {
+                    "type": "string",
+                    "enum": ["upstream", "downstream"],
+                    "description": "Defaults to upstream.",
+                },
+            }
+        ),
     ),
     Tool(
-        name="lineage.upstream",
+        name="model_overview",
         description=(
-            "Retrieve what the resolved object depends on "
-            "(bounded-depth upstream lineage)."
+            "List what the semantic model in context contains: its tables, "
+            "the measures in each, and how many columns. Use this for "
+            "inventory or orientation questions such as 'what measures are "
+            "there' or 'what am I looking at'."
         ),
-        requires_context=frozenset({"semantic_model", "resolved_object"}),
-        handler=lineage_tools.get_upstream_lineage,
+        requires_context=frozenset({"semantic_model"}),
+        handler=agent_tools.model_overview,
+        parameters=_schema({}),
     ),
     Tool(
-        name="lineage.downstream",
+        name="search_model",
         description=(
-            "Retrieve what depends on the resolved object "
-            "(bounded-depth downstream lineage)."
+            "Find measures, columns or tables whose name contains a term. "
+            "Use this first when the exact object name is not known."
         ),
-        requires_context=frozenset({"semantic_model", "resolved_object"}),
-        handler=lineage_tools.get_downstream_lineage,
+        requires_context=frozenset({"semantic_model"}),
+        handler=agent_tools.search_model,
+        parameters=_schema(
+            {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "A short entity term such as NET_SALES or Revenue -- "
+                        "not the user's whole sentence."
+                    ),
+                }
+            },
+            required=["query"],
+        ),
     ),
     Tool(
-        name="impact.analyze",
+        name="physical_sources",
         description=(
-            "Analyze downstream impact of the resolved object via the real "
-            "impact graph."
+            "List the databases, schemas and tables the semantic model "
+            "ultimately reads from, including across a composite model."
         ),
-        requires_context=frozenset({"semantic_model", "resolved_object"}),
-        handler=impact_tools.analyze_impact,
+        requires_context=frozenset({"semantic_model"}),
+        handler=agent_tools.physical_sources,
+        parameters=_schema({}),
+    ),
+    Tool(
+        name="report_overview",
+        description=(
+            "Summarise the report in context: its format, pages, and how "
+            "many visuals it has."
+        ),
+        requires_context=frozenset({"report_definition"}),
+        handler=agent_tools.report_overview,
+        parameters=_schema({}),
+    ),
+    Tool(
+        name="report_visuals",
+        description=(
+            "List the report's visuals and the semantic fields each one "
+            "uses. Call this only when the user explicitly asks about "
+            "visuals, pages, charts, cards or slicers."
+        ),
+        requires_context=frozenset({"report_definition"}),
+        handler=agent_tools.report_visuals,
+        parameters=_schema({}),
     ),
 )
 
 TOOL_REGISTRY: dict[str, Tool] = {tool.name: tool for tool in _TOOLS}
+
+
+def available_tools(context) -> list[Tool]:
+    """Only the tools whose required context is actually present."""
+    return [tool for tool in _TOOLS if tool.is_available(context)]
+
+
+def tool_schemas(context) -> list[dict]:
+    return [tool.schema() for tool in available_tools(context)]

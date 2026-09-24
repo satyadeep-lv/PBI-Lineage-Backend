@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.core.exceptions import UpstreamInvalidResponseError
+from app.domain.semantic_model_filters import (
+    exclude_auto_date_tables,
+    exclude_auto_date_tables_from_xmla,
+)
 from app.schemas.parsed_semantic_model import (
     ParsedSemanticModelColumn,
     ParsedSemanticModelHierarchy,
@@ -88,6 +92,7 @@ class SemanticModelMetadataService:
         workspace_name: str | None = None,
         database_name: str | None = None,
         definition_format: str = "TMDL",
+        include_auto_date_tables: bool = False,
     ) -> SemanticModelMetadataResponse:
         definition, xmla = await asyncio.gather(
             self.definition_service.get_parsed_definition(
@@ -117,6 +122,12 @@ class SemanticModelMetadataService:
             semantic_model_id=semantic_model_id,
             provider="xmla",
         )
+
+        if not include_auto_date_tables:
+            # Filter before reconciling so the match list is computed from the
+            # same tables the caller is shown.
+            definition = exclude_auto_date_tables(definition)
+            xmla = exclude_auto_date_tables_from_xmla(xmla)
 
         return SemanticModelMetadataResponse(
             workspace_id=workspace_id,

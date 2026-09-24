@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock
 
 import httpx
@@ -279,3 +280,102 @@ async def test_lro_semantic_model_definition_failed_status(
 
     assert "OperationFailed" in (exc_info.value.message)
     assert "Semantic model export failed." in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_definition_is_fetched_once_and_served_from_cache():
+    service = SemanticModelDefinitionService()
+    start = AsyncMock(
+        return_value=httpx.Response(status_code=200, json=_definition_payload())
+    )
+    service.client.start_semantic_model_definition = start
+
+    for _ in range(3):
+        result = await service.get_definition(
+            workspace_id="workspace-123",
+            semantic_model_id="model-123",
+            access_token="token",
+            definition_format="TMDL",
+        )
+        assert len(result.definition.parts) == 2
+
+    assert start.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cached_definition_is_not_served_to_a_different_token():
+    # Two principals do not necessarily have the same access, so the cache key
+    # includes the caller.
+    service = SemanticModelDefinitionService()
+    start = AsyncMock(
+        return_value=httpx.Response(status_code=200, json=_definition_payload())
+    )
+    service.client.start_semantic_model_definition = start
+
+    for token in ("token-a", "token-b"):
+        await service.get_definition(
+            workspace_id="workspace-123",
+            semantic_model_id="model-123",
+            access_token=token,
+            definition_format="TMDL",
+        )
+
+    assert start.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_callers_share_one_definition_fetch():
+    service = SemanticModelDefinitionService()
+    calls = 0
+
+    async def slow_start(**kwargs):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.01)
+        return httpx.Response(status_code=200, json=_definition_payload())
+
+    service.client.start_semantic_model_definition = slow_start
+
+    results = await asyncio.gather(
+        *(
+            service.get_definition(
+                workspace_id="workspace-123",
+                semantic_model_id="model-123",
+                access_token="token",
+                definition_format="TMDL",
+            )
+            for _ in range(5)
+        )
+    )
+
+    assert calls == 1
+    assert all(len(result.definition.parts) == 2 for result in results)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fetch_is_not_cached():
+    service = SemanticModelDefinitionService()
+    responses = [
+        httpx.Response(status_code=200, json={}),
+        httpx.Response(status_code=200, json=_definition_payload()),
+    ]
+    service.client.start_semantic_model_definition = AsyncMock(
+        side_effect=lambda **kwargs: responses.pop(0)
+    )
+
+    with pytest.raises(UpstreamInvalidResponseError):
+        await service.get_definition(
+            workspace_id="workspace-123",
+            semantic_model_id="model-123",
+            access_token="token",
+            definition_format="TMDL",
+        )
+
+    result = await service.get_definition(
+        workspace_id="workspace-123",
+        semantic_model_id="model-123",
+        access_token="token",
+        definition_format="TMDL",
+    )
+
+    assert len(result.definition.parts) == 2

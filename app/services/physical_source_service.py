@@ -25,6 +25,11 @@ _DATABASE_CONNECTORS = {
     # (server, database) shape as the SQL connectors above.
     "analysisservices.database": "analysis_services",
 }
+# `Snowflake.Databases(server, warehouse, options)` -- the second positional
+# argument names the compute warehouse, not a database. Reading it as the
+# database silently mislabels every Snowflake table whose database is only
+# knowable from the navigation step or the native query.
+_WAREHOUSE_POSITIONAL_CONNECTORS = frozenset({"snowflake.databases"})
 _URL_CONNECTORS = {
     "odata.feed": "odata",
     "web.contents": "web",
@@ -188,6 +193,7 @@ class PhysicalSourceDiscoveryService:
         schema_name: str | None = None,
     ) -> list[PhysicalDataSource]:
         navigation = self._navigation_target(expression)
+        navigated_database = self._navigated_database(expression)
         native_queries = self._native_queries(expression)
         sources: dict[str, PhysicalDataSource] = {}
 
@@ -196,8 +202,12 @@ class PhysicalSourceDiscoveryService:
 
             if normalized_name in _DATABASE_CONNECTORS:
                 server = _string_argument(call.arguments, 0)
-                database = _string_argument(call.arguments, 1)
                 warehouse = _record_string(call.arguments, "Warehouse")
+                if normalized_name in _WAREHOUSE_POSITIONAL_CONNECTORS:
+                    database = None
+                    warehouse = warehouse or _string_argument(call.arguments, 1)
+                else:
+                    database = _string_argument(call.arguments, 1)
                 candidates = native_queries or [None]
 
                 for native_query in candidates:
@@ -226,7 +236,7 @@ class PhysicalSourceDiscoveryService:
                             provider=_DATABASE_CONNECTORS[normalized_name],
                             connector=call.name,
                             server=server,
-                            database=sql_database or database,
+                            database=(sql_database or database or navigated_database),
                             schema_name=target_schema,
                             object_name=object_name,
                             object_kind=object_kind,
@@ -394,6 +404,15 @@ class PhysicalSourceDiscoveryService:
             match.group("object").replace('""', '"'),
             None,
         )
+
+    @staticmethod
+    def _navigated_database(expression: str) -> str | None:
+        # The database can be navigated to even when the object itself comes
+        # from a native query rather than a `Kind="Table"` step.
+        for match in _KIND_NAVIGATION_PATTERN.finditer(expression):
+            if match.group("kind").casefold() == "database":
+                return match.group("name").replace('""', '"')
+        return None
 
     @staticmethod
     def _native_queries(expression: str) -> list[str]:

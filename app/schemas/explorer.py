@@ -24,6 +24,10 @@ class ExplorerRequest(BaseModel):
     )
     include_gateway_sources: bool = False
     include_cross_model_matching: bool = False
+    # Follow a composite model's DirectQuery link into the workspace it points
+    # at, so its tables report the database behind the link instead of
+    # stopping at the Power BI model.
+    resolve_cross_workspace_sources: bool = True
     report_definition_format: Literal[
         "PBIR",
         "PBIR-Legacy",
@@ -90,6 +94,11 @@ class SourceDatabaseLineageRow(BaseModel):
     source_fully_qualified_name: str
     gateway_id: str | None = None
     gateway_datasource_id: str | None = None
+    via_workspace_id: str | None = None
+    via_workspace_name: str | None = None
+    via_semantic_model_id: str | None = None
+    via_semantic_model_name: str | None = None
+    via_semantic_table: str | None = None
 
 
 class ReportSourceTableRow(BaseModel):
@@ -110,6 +119,9 @@ class ReportSourceTableRow(BaseModel):
         "endpoint",
         "unknown",
     ]
+    via_workspace_name: str | None = None
+    via_semantic_model_name: str | None = None
+    via_semantic_table: str | None = None
 
 
 class SemanticModelObjectRow(BaseModel):

@@ -407,3 +407,133 @@ def test_tmsl_returns_unsupported_warning():
     assert result.tables == []
     assert len(result.warnings) == 1
     assert result.warnings[0].code == "UNSUPPORTED_FORMAT"
+
+
+def test_parse_table_level_lineage_tags():
+    raw = _raw_definition(
+        text="""
+table EMPLOYEES
+	lineageTag: b9102830-fccf-45c0-8062-f9684c84d24e
+	sourceLineageTag: 20c85782-79d8-425b-bcf3-50478c2aeb24
+
+	column EMPLOYEE_ID
+		dataType: double
+		lineageTag: 6eac2c81-4f7d-4319-80e6-8405bd6a279e
+		sourceLineageTag: f174b026-8e39-4626-8e5d-e3a55f3ac723
+		sourceColumn: EMPLOYEE_ID
+"""
+    )
+
+    result = SemanticModelDefinitionParser().parse(raw)
+
+    table = result.tables[0]
+    assert table.lineage_tag == "b9102830-fccf-45c0-8062-f9684c84d24e"
+    assert table.source_lineage_tag == "20c85782-79d8-425b-bcf3-50478c2aeb24"
+    # The column's own tags must not be swallowed by the table.
+    assert table.columns[0].lineage_tag == "6eac2c81-4f7d-4319-80e6-8405bd6a279e"
+    assert table.columns[0].source_lineage_tag == "f174b026-8e39-4626-8e5d-e3a55f3ac723"
+
+
+def test_measure_dax_excludes_trailing_tmdl_annotations():
+    # `PROPERTY_KEY_PATTERN` only matches a single bare word, so
+    # "annotation PBI_FormatHint" was not recognised as a property key and
+    # was appended to the DAX -- every measure in a real model came back
+    # with the annotation stuck on the end of its expression.
+    raw = _raw_definition(
+        text="""
+table Sales
+
+	measure 'Total Revenue' = SUM('Sales'[AMOUNT])
+		formatString: 0.00%
+		lineageTag: 0f0b3b1e-0000-0000-0000-000000000000
+
+		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+	measure 'Profit Margin %' = DIVIDE([Profit], [Total Revenue], 0)
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		changedProperty = IsHidden
+"""
+    )
+
+    result = SemanticModelDefinitionParser().parse(raw)
+
+    measures = {measure.name: measure for measure in result.tables[0].measures}
+    assert measures["Total Revenue"].expression == "SUM('Sales'[AMOUNT])"
+    assert measures["Total Revenue"].format_string == "0.00%"
+    assert measures["Profit Margin %"].expression == (
+        "DIVIDE([Profit], [Total Revenue], 0)"
+    )
+    assert not any(
+        "annotation" in (measure.expression or "") for measure in measures.values()
+    )
+
+
+def test_calculated_column_dax_excludes_trailing_tmdl_annotations():
+    raw = _raw_definition(
+        text="""
+table Sales
+
+	column Margin = 'Sales'[REVENUE] - 'Sales'[COST]
+		dataType: double
+
+		annotation SummarizationSetBy = Automatic
+"""
+    )
+
+    result = SemanticModelDefinitionParser().parse(raw)
+
+    column = result.tables[0].columns[0]
+    assert column.expression == "'Sales'[REVENUE] - 'Sales'[COST]"
+
+
+def test_multi_line_measure_dax_is_still_joined():
+    # The annotation filter must not truncate a genuine multi-line
+    # expression.
+    raw = _raw_definition(
+        text="""
+table Sales
+
+	measure 'Revenue Band' = ```
+			SWITCH(TRUE(),
+			'Sales'[Total Revenue] >= 50000, "High",
+			"Low"
+			)
+			```
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+"""
+    )
+
+    result = SemanticModelDefinitionParser().parse(raw)
+
+    expression = result.tables[0].measures[0].expression or ""
+    assert "SWITCH(TRUE()," in expression
+    assert '"Low"' in expression
+    assert "annotation" not in expression
+
+
+def test_multi_line_dax_drops_the_tmdl_code_fence():
+    # TMDL wraps a multi-line value in ``` delimiters. They are a block
+    # marker, not part of the DAX, but they survived into the expression --
+    # so every multi-line measure was shown starting with a code fence.
+    raw = _raw_definition(
+        text="""
+table Sales
+
+	measure 'Revenue Band' = ```
+			SWITCH(TRUE(),
+			'Sales'[Revenue] >= 50000, "High",
+			"Low"
+			)
+			```
+"""
+    )
+
+    result = SemanticModelDefinitionParser().parse(raw)
+
+    expression = result.tables[0].measures[0].expression or ""
+    assert "```" not in expression
+    assert expression.startswith("SWITCH(TRUE(),")
+    assert expression.rstrip().endswith(")")

@@ -12,6 +12,7 @@ from app.api.dependencies.credentials import (
     get_fabric_access_token,
     get_powerbi_access_token,
 )
+from app.domain.semantic_model_filters import exclude_auto_date_tables
 from app.schemas.normalized_report_definition import (
     NormalizedReportDefinitionResponse,
 )
@@ -355,15 +356,26 @@ async def get_workspace_parsed_semantic_model_definition(
             alias="format",
         ),
     ] = "TMDL",
+    include_auto_date_tables: Annotated[
+        bool,
+        Query(
+            alias="includeAutoDateTables",
+        ),
+    ] = False,
 ) -> ParsedSemanticModelResponse:
     service = SemanticModelDefinitionService()
 
-    return await service.get_parsed_definition(
+    parsed = await service.get_parsed_definition(
         workspace_id=str(workspace_id),
         semantic_model_id=str(semantic_model_id),
         access_token=access_token,
         definition_format=definition_format,
     )
+
+    if include_auto_date_tables:
+        return parsed
+
+    return exclude_auto_date_tables(parsed)
 
 
 @router.post(
@@ -481,6 +493,12 @@ async def get_workspace_semantic_model_metadata(
             alias="format",
         ),
     ] = "TMDL",
+    include_auto_date_tables: Annotated[
+        bool,
+        Query(
+            alias="includeAutoDateTables",
+        ),
+    ] = False,
 ) -> SemanticModelMetadataResponse:
     service = SemanticModelMetadataService()
 
@@ -492,6 +510,7 @@ async def get_workspace_semantic_model_metadata(
         workspace_name=workspace_name,
         database_name=database_name,
         definition_format=definition_format,
+        include_auto_date_tables=include_auto_date_tables,
     )
 
 

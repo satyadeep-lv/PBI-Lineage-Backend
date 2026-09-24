@@ -95,6 +95,12 @@ class SemanticModelDefinitionParser:
                 result=result,
             )
 
+        for table in result.tables:
+            for measure in table.measures:
+                measure.expression = self._strip_code_fence(measure.expression)
+            for column in table.columns:
+                column.expression = self._strip_code_fence(column.expression)
+
         return result
 
     def _parse_tmdl_part(
@@ -298,6 +304,7 @@ class SemanticModelDefinitionParser:
 
                 if (
                     not applied
+                    and not self._is_metadata_line(line)
                     and not self._looks_like_property_key(key)
                     and current_column.expression is not None
                 ):
@@ -312,7 +319,11 @@ class SemanticModelDefinitionParser:
                     value,
                 )
 
-                if not applied and not self._looks_like_property_key(key):
+                if (
+                    not applied
+                    and not self._is_metadata_line(line)
+                    and not self._looks_like_property_key(key)
+                ):
                     current_measure.expression = self._append_expression(
                         current_measure.expression,
                         line,
@@ -322,6 +333,14 @@ class SemanticModelDefinitionParser:
                     current_hierarchy.levels[-1].column = self._clean_name(value)
             elif current_relationship:
                 self._apply_relationship_property(current_relationship, key, value)
+            elif current_table is not None and key in {
+                "lineageTag",
+                "sourceLineageTag",
+            }:
+                if key == "lineageTag":
+                    current_table.lineage_tag = value
+                else:
+                    current_table.source_lineage_tag = value
             elif (
                 current_table
                 and current_table.expression is not None
@@ -404,6 +423,41 @@ class SemanticModelDefinitionParser:
         key: str,
     ) -> bool:
         return bool(key and PROPERTY_KEY_PATTERN.match(key))
+
+    @staticmethod
+    def _strip_code_fence(expression: str | None) -> str | None:
+        """Drop the ``` delimiters TMDL wraps a multi-line value in.
+
+        They are a block marker, not part of the DAX, but they survived into
+        every multi-line measure -- so the expression shown to a user began
+        and ended with a code fence.
+        """
+        if expression is None:
+            return None
+
+        text = expression.strip()
+
+        if not text.startswith("```"):
+            return expression
+
+        text = text.removeprefix("```")
+        if text.endswith("```"):
+            text = text[: -len("```")]
+
+        return text.strip() or expression
+
+    @staticmethod
+    def _is_metadata_line(line: str) -> bool:
+        """TMDL metadata that trails a measure or calculated column.
+
+        `PROPERTY_KEY_PATTERN` only matches a single bare word, so keys such
+        as `annotation PBI_FormatHint` were not recognised as properties and
+        were appended to the DAX instead -- every measure in a real model
+        came back with `annotation PBI_FormatHint = {...}` stuck on the end
+        of its expression. DAX has no such construct, so matching the prefix
+        cannot swallow real expression text.
+        """
+        return line.startswith(EXPRESSION_METADATA_PREFIXES)
 
     @staticmethod
     def _parse_field_reference(value: str) -> tuple[str | None, str | None]:

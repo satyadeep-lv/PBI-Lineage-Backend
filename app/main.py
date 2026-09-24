@@ -7,6 +7,7 @@ from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.router import api_router
+from app.clients.provider_http_client import close_provider_http_client
 from app.core.config import get_settings
 from app.core.error_handlers import register_exception_handlers
 from app.core.logging import configure_logging
@@ -31,6 +32,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await close_provider_http_client()
         close_snowflake_session_store()
 
 

@@ -35,6 +35,7 @@ async def test_get_report_in_my_workspace_uses_my_workspace_url(
         url=("https://api.powerbi.com/v1.0/myorg/reports/report-1"),
         access_token="fake-token",
         not_found_resource="report",
+        cacheable=True,
     )
 
 
@@ -70,6 +71,7 @@ async def test_get_gateways_uses_gateway_collection_url(
         provider="powerbi",
         url=("https://api.powerbi.com/v1.0/myorg/gateways"),
         access_token="fake-token",
+        cacheable=True,
     )
 
 
@@ -106,6 +108,7 @@ async def test_get_gateway_datasource_uses_gateway_datasource_url(
         ),
         access_token="fake-token",
         not_found_resource="gateway datasource",
+        cacheable=True,
     )
 
 
@@ -141,4 +144,5 @@ async def test_get_gateway_datasources_uses_gateway_collection_url(
         provider="powerbi",
         url=("https://api.powerbi.com/v1.0/myorg/gateways/gateway-1/datasources"),
         access_token="fake-token",
+        cacheable=True,
     )

@@ -545,6 +545,7 @@ def test_get_semantic_model_metadata(
         workspace_name: str | None,
         database_name: str | None,
         definition_format: str,
+        include_auto_date_tables: bool = False,
     ) -> SemanticModelMetadataResponse:
         assert workspace_id == WORKSPACE_ID
         assert semantic_model_id == SEMANTIC_MODEL_ID

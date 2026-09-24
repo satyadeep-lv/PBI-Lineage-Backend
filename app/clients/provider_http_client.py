@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import httpx
@@ -11,8 +12,48 @@ from app.core.exceptions import (
     UpstreamTimeoutError,
     UpstreamUnavailableError,
 )
+from app.services.provider_read_cache import get_provider_read_cache
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
+
+# A single pooled client for every Power BI / Fabric / scanner call. Building
+# an `AsyncClient` per request made each one pay a fresh DNS lookup, TCP
+# connect and TLS handshake against the same two hosts -- easily more wall
+# clock than the call itself, and paid again on every poll of a long-running
+# getDefinition operation.
+_CONNECTION_LIMITS = httpx.Limits(
+    max_connections=50,
+    max_keepalive_connections=20,
+    keepalive_expiry=60.0,
+)
+_client: httpx.AsyncClient | None = None
+_client_lock = asyncio.Lock()
+
+
+async def get_provider_http_client() -> httpx.AsyncClient:
+    global _client
+
+    if _client is not None and not _client.is_closed:
+        return _client
+
+    async with _client_lock:
+        if _client is None or _client.is_closed:
+            _client = httpx.AsyncClient(
+                timeout=httpx.Timeout(DEFAULT_TIMEOUT_SECONDS),
+                limits=_CONNECTION_LIMITS,
+            )
+
+    return _client
+
+
+async def close_provider_http_client() -> None:
+    global _client
+
+    client = _client
+    _client = None
+
+    if client is not None and not client.is_closed:
+        await client.aclose()
 
 
 def _optional_text(
@@ -162,15 +203,14 @@ async def _provider_request(
     if json_body is not None:
         request_kwargs["json"] = json_body
 
+    client = await get_provider_http_client()
+
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(DEFAULT_TIMEOUT_SECONDS),
-        ) as client:
-            response = await client.request(
-                method=method,
-                url=url,
-                **request_kwargs,
-            )
+        response = await client.request(
+            method=method,
+            url=url,
+            **request_kwargs,
+        )
 
     except httpx.TimeoutException as exc:
         raise UpstreamTimeoutError(provider) from exc
@@ -195,16 +235,49 @@ async def provider_get(
     params: dict[str, Any] | None = None,
     additional_headers: dict[str, str] | None = None,
     not_found_resource: str | None = None,
+    cacheable: bool = False,
 ) -> httpx.Response:
-    return await _provider_request(
-        method="GET",
-        provider=provider,
-        url=url,
-        access_token=access_token,
-        params=params,
-        additional_headers=additional_headers,
-        not_found_resource=(not_found_resource),
+    # Caching is opt-in per call site rather than on by default: most GETs
+    # here are safe to replay, but polling a long-running operation or
+    # validating a connection must always reach the provider, and a cached
+    # "still running" would never resolve.
+    if not cacheable:
+        return await _provider_request(
+            method="GET",
+            provider=provider,
+            url=url,
+            access_token=access_token,
+            params=params,
+            additional_headers=additional_headers,
+            not_found_resource=(not_found_resource),
+        )
+
+    cache = get_provider_read_cache()
+    key = (
+        cache.fingerprint(access_token),
+        provider,
+        url,
+        _canonical_params(params),
     )
+
+    return await cache.get_or_fetch(
+        key,
+        lambda: _provider_request(
+            method="GET",
+            provider=provider,
+            url=url,
+            access_token=access_token,
+            params=params,
+            additional_headers=additional_headers,
+            not_found_resource=(not_found_resource),
+        ),
+    )
+
+
+def _canonical_params(params: dict[str, Any] | None) -> str:
+    if not params:
+        return ""
+    return "&".join(f"{key}={params[key]}" for key in sorted(params))
 
 
 async def provider_post(

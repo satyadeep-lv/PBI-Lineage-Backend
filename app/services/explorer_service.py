@@ -56,6 +56,9 @@ from app.services.cross_model_lineage_service import (
     CrossModelLineageService,
     build_lineage_tag_index,
 )
+from app.services.cross_workspace_source_resolver import (
+    CrossWorkspaceSourceResolver,
+)
 from app.services.dax_dependency_service import DaxDependencyService
 from app.services.gateway_service import GatewayService
 from app.services.physical_source_service import PhysicalSourceDiscoveryService
@@ -134,6 +137,7 @@ class ExplorerService:
         report_semantic_lineage_service: (ReportSemanticLineageService | None) = None,
         gateway_service: GatewayService | None = None,
         cross_model_lineage_service: CrossModelLineageService | None = None,
+        cross_workspace_source_resolver: (CrossWorkspaceSourceResolver | None) = None,
         max_concurrency: int = 8,
     ) -> None:
         if max_concurrency < 1:
@@ -153,6 +157,9 @@ class ExplorerService:
         self.gateway_service = gateway_service or GatewayService()
         self.cross_model_lineage_service = (
             cross_model_lineage_service or CrossModelLineageService()
+        )
+        self.cross_workspace_source_resolver = (
+            cross_workspace_source_resolver or CrossWorkspaceSourceResolver()
         )
         self.max_concurrency = max_concurrency
 
@@ -399,6 +406,26 @@ class ExplorerService:
             physical_by_model = {
                 key: task.result() for key, task in physical_tasks.items()
             }
+
+            if request.resolve_cross_workspace_sources:
+                # Rewriting the discovery result here means every dataset
+                # built from it -- source lineage, report source tables and
+                # measure lineage -- reports the real database behind a
+                # composite model rather than the Power BI hop.
+                (
+                    physical_by_model,
+                    cross_workspace_warnings,
+                ) = await self.cross_workspace_source_resolver.resolve(
+                    physical_by_model=physical_by_model,
+                    models_by_key={
+                        model_key: semantic_model_tasks[model_key].result()
+                        for model_key in self._model_keys(evidence)
+                    },
+                    powerbi_access_token=powerbi_access_token,
+                    fabric_access_token=fabric_access_token,
+                    definition_format=request.semantic_model_definition_format,
+                )
+                warnings.extend(cross_workspace_warnings)
 
         dax_by_model: dict[tuple[str, str], DaxDependencyAnalysisResponse] = {}
         if needs_dax:
@@ -885,6 +912,11 @@ class ExplorerService:
             source_fully_qualified_name=self._physical_qualified_name(source),
             gateway_id=source.gateway_id,
             gateway_datasource_id=source.gateway_datasource_id,
+            via_workspace_id=source.via_workspace_id,
+            via_workspace_name=source.via_workspace_name,
+            via_semantic_model_id=source.via_semantic_model_id,
+            via_semantic_model_name=source.via_semantic_model_name,
+            via_semantic_table=source.via_semantic_table,
         )
 
     def _report_source_table_rows(
@@ -920,6 +952,9 @@ class ExplorerService:
                                 source.object_name or source.path or source.url
                             ),
                             source_object_type=self._physical_object_type(source),
+                            via_workspace_name=source.via_workspace_name,
+                            via_semantic_model_name=source.via_semantic_model_name,
+                            via_semantic_table=source.via_semantic_table,
                         )
                         for source in resolved_sources
                     ]

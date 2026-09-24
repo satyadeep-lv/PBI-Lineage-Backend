@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     lineage_cache_ttl_seconds: float = Field(default=30.0, ge=0.0)
     lineage_cache_max_entries: int = Field(default=128, ge=1)
     lineage_scan_max_concurrency: int = Field(default=2, ge=1, le=32)
+    # Session-scoped cache for repeated Power BI/Fabric reads. The default TTL
+    # covers a typical sitting, so moving between screens does not re-ask the
+    # provider for the same workspaces and reports. Set to 0 to disable.
+    provider_read_cache_ttl_seconds: float = Field(default=1800.0, ge=0.0)
+    provider_read_cache_max_entries: int = Field(default=512, ge=1)
     snowflake_session_max_age_seconds: int = Field(
         default=45 * 60,
         ge=60,

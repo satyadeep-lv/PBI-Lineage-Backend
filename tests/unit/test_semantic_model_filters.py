@@ -1,5 +1,6 @@
 from app.domain.semantic_model_filters import (
     exclude_auto_date_tables,
+    exclude_auto_date_tables_from_xmla,
     is_auto_date_table,
 )
 from app.schemas.parsed_semantic_model import (
@@ -7,6 +8,59 @@ from app.schemas.parsed_semantic_model import (
     ParsedSemanticModelResponse,
     ParsedSemanticModelTable,
 )
+from app.schemas.xmla_metadata import (
+    XmlaCalcDependency,
+    XmlaSemanticModelColumn,
+    XmlaSemanticModelMetadataResponse,
+    XmlaSemanticModelTable,
+)
+
+
+def test_exclude_auto_date_tables_from_xmla_also_fixes_counts():
+    metadata = XmlaSemanticModelMetadataResponse(
+        workspace_id="workspace-1",
+        semantic_model_id="model-1",
+        xmla_endpoint="powerbi://api.powerbi.com/v1.0/myorg/POC",
+        table_count=2,
+        column_count=3,
+        measure_count=0,
+        relationship_count=0,
+        hierarchy_count=0,
+        partition_count=0,
+        tables=[
+            XmlaSemanticModelTable(
+                name="Sales Story",
+                columns=[XmlaSemanticModelColumn(name="ORDER_DATE")],
+            ),
+            XmlaSemanticModelTable(
+                name="LocalDateTable_ba0f4577-3a55-46df-81b3-a8835255e931",
+                columns=[
+                    XmlaSemanticModelColumn(name="Date"),
+                    XmlaSemanticModelColumn(name="Year"),
+                ],
+            ),
+        ],
+        calc_dependencies=[
+            XmlaCalcDependency(
+                table="LocalDateTable_ba0f4577-3a55-46df-81b3-a8835255e931",
+                referenced_object_type="COLUMN",
+                referenced_table="Sales Story",
+            ),
+            XmlaCalcDependency(
+                table="Sales Story",
+                referenced_object_type="COLUMN",
+                referenced_table="Sales Story",
+            ),
+        ],
+    )
+
+    result = exclude_auto_date_tables_from_xmla(metadata)
+
+    assert [table.name for table in result.tables] == ["Sales Story"]
+    assert result.table_count == 1
+    assert result.column_count == 1
+    assert len(result.calc_dependencies) == 1
+    assert result.calc_dependencies[0].table == "Sales Story"
 
 
 def test_is_auto_date_table():

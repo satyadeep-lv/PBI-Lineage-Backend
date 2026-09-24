@@ -782,10 +782,13 @@ def _semantic_model(
                         name="Sales",
                         source_type="m",
                         expression=(
+                            # The second positional argument of
+                            # `Snowflake.Databases` is the warehouse; the
+                            # database is navigated to.
                             "Snowflake.Databases("
-                            '"acme.snowflakecomputing.com", "ANALYTICS", '
-                            '[Warehouse="WH"]){[Schema="MART",'
-                            'Item="FACT_SALES"]}[Data]'
+                            '"acme.snowflakecomputing.com", "WH")'
+                            '{[Name="ANALYTICS",Kind="Database"]}[Data]'
+                            '{[Schema="MART",Item="FACT_SALES"]}[Data]'
                         ),
                     )
                 ],

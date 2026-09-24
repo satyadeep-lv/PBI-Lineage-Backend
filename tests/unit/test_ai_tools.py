@@ -62,7 +62,23 @@ def test_get_upstream_lineage_reaches_dependencies_and_physical_source():
     assert "Gross Profit" in object_names
     assert "Net Sales" in object_names
     assert "physical_source" in object_types
-    assert all(item.fact_type == "dependency" for item in items)
+
+    # Semantic-model objects and the database behind them are different kinds
+    # of answer, so they are reported as separate fact types rather than one
+    # flat "depends on" list.
+    fact_types = {item.object_type: item.fact_type for item in items}
+    assert fact_types["physical_source"] == "source"
+    assert fact_types["semantic_measure"] == "dependency"
+    assert all(
+        item.fact_type == "dependency"
+        for item in items
+        if item.object_type != "physical_source"
+    )
+
+    # The database detail travels with it, so a caller need not parse the
+    # qualified name back apart.
+    source = next(item for item in items if item.object_type == "physical_source")
+    assert source.value["properties"]["provider"]
 
 
 def test_get_downstream_lineage_empty_when_nothing_downstream():

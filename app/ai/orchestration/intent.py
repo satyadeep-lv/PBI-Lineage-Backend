@@ -20,6 +20,36 @@ _MEASURE_KEYWORDS = (
     "calculated",
     "definition",
     "dax",
+    "measure",
+)
+# Asking what exists is a different question from asking about one object,
+# and must not be routed to an agent that needs a specific object resolved.
+_INVENTORY_KEYWORDS = (
+    "how many",
+    "how much",
+    "list ",
+    "what are",
+    "which are",
+    "what measures",
+    "which measures",
+    "what tables",
+    "which tables",
+    "what columns",
+    "which columns",
+    "what reports",
+    "which reports",
+)
+# Asking about the current view, when nothing specific is selected.
+_CONTEXT_KEYWORDS = (
+    "looking at",
+    "what am i",
+    "overview",
+    "summarise",
+    "summarize",
+    "summary",
+    "what can you",
+    "what can power ai",
+    "help me with",
 )
 _REPORT_KEYWORDS = (
     "report",
@@ -44,6 +74,11 @@ def classify_intent(
     normalized = message.casefold()
     object_type = (context.object_type if context else None) or ""
 
+    # Checked before the object-type hint: "what measures are there" is an
+    # inventory question even while a measure happens to be selected.
+    if any(keyword in normalized for keyword in _INVENTORY_KEYWORDS):
+        return AIIntent.SEMANTIC_MODEL_INFORMATION
+
     if any(keyword in normalized for keyword in _IMPACT_KEYWORDS):
         return AIIntent.OBJECT_IMPACT
 
@@ -65,7 +100,11 @@ def classify_intent(
     if object_type == "report":
         return AIIntent.REPORT_INFORMATION
 
-    # No object-type hint: fall back to keyword inference over the message.
+    # No object-type hint: describing the current view comes before generic
+    # verbs like "explain", which say nothing about *what* to explain.
+    if any(keyword in normalized for keyword in _CONTEXT_KEYWORDS):
+        return AIIntent.SEMANTIC_MODEL_INFORMATION
+
     if any(keyword in normalized for keyword in _MEASURE_KEYWORDS):
         return AIIntent.MEASURE_EXPLANATION
 

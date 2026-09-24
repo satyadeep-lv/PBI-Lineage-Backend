@@ -34,6 +34,14 @@ class PhysicalDataSource(BaseModel):
     gateway_id: str | None = None
     gateway_datasource_id: str | None = None
     sso_enabled: bool | None = None
+    # Set when this source was reached by following a composite model's
+    # DirectQuery link into another workspace, so the hop stays visible even
+    # though the row now reports the real database behind it.
+    via_workspace_id: str | None = None
+    via_workspace_name: str | None = None
+    via_semantic_model_id: str | None = None
+    via_semantic_model_name: str | None = None
+    via_semantic_table: str | None = None
 
 
 class QuerySourceMapping(BaseModel):

@@ -34,10 +34,15 @@ class SnowflakeLineageQueryClient:
         direction: str,
         max_distance: int,
     ) -> list[dict[str, Any]]:
-        cursor = connection.cursor()
         description = None
         rows: list[Any] = []
+        cursor = None
         try:
+            # Opening the cursor has to be inside the guard too: on a
+            # connection that has dropped or been left in a bad state, this is
+            # where the connector raises, and an unwrapped driver exception
+            # escapes every `AppException` handler above and 500s the request.
+            cursor = connection.cursor()
             cursor.execute(
                 _GET_LINEAGE_SQL,
                 (object_name, object_domain, direction, max_distance),
@@ -45,9 +50,10 @@ class SnowflakeLineageQueryClient:
             description = cursor.description
             rows = cursor.fetchall()
         except Exception as exc:
-            raise UpstreamRequestError("snowflake") from exc
+            raise UpstreamRequestError("snowflake", detail=str(exc)) from exc
         finally:
-            self._close(cursor)
+            if cursor is not None:
+                self._close(cursor)
 
         if not description:
             raise UpstreamInvalidResponseError("snowflake")

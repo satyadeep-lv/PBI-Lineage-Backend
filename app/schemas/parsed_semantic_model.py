@@ -79,6 +79,11 @@ class ParsedSemanticModelTable(BaseModel):
     name: str
     source_path: str | None = None
     expression: str | None = None
+    lineage_tag: str | None = None
+    # A composite model stamps the upstream table's `lineageTag` here, which
+    # is what lets a DirectQuery table be matched back to its origin even
+    # after either side has been renamed.
+    source_lineage_tag: str | None = None
     columns: list[ParsedSemanticModelColumn] = Field(default_factory=list)
     measures: list[ParsedSemanticModelMeasure] = Field(default_factory=list)
     hierarchies: list[ParsedSemanticModelHierarchy] = Field(default_factory=list)

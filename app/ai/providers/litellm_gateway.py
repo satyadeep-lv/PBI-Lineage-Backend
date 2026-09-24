@@ -1,6 +1,9 @@
+import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+from app.ai.models.messages import ModelMessage, ModelToolCall
 from app.ai.models.requests import ModelRequest
 from app.ai.models.responses import ModelChunk, ModelResponse, TokenUsage
 from app.core.exceptions import (
@@ -9,6 +12,7 @@ from app.core.exceptions import (
     AIProviderRateLimitedError,
     AIProviderTimeoutError,
     AIProviderUnavailableError,
+    AppException,
 )
 
 _LITELLM_MODEL_PREFIX = {
@@ -17,6 +21,118 @@ _LITELLM_MODEL_PREFIX = {
     "gemini": "gemini",
     "azure_openai": "azure",
 }
+
+
+_IMPORT_FAILURE_TTL_SECONDS = 60.0
+_litellm_module: Any = None
+_litellm_import_failed_at: float | None = None
+_litellm_import_error: str = ""
+
+
+def _load_litellm() -> Any:
+    """Import litellm once, and remember a failure for a short while.
+
+    Python does not cache failed imports, so on a host that cannot reach
+    litellm's bundled-tokenizer/model-cost-map endpoints every single request
+    re-ran the whole import and waited out its retry/backoff -- measured at
+    ~28 seconds per request, which reads as a hung chat box rather than a
+    provider that is simply unreachable. Remembering the failure briefly
+    makes the request fail fast and fall back to the deterministic answer,
+    while still retrying periodically in case the network comes back.
+    """
+    global _litellm_module, _litellm_import_failed_at, _litellm_import_error
+
+    if _litellm_module is not None:
+        return _litellm_module
+
+    if (
+        _litellm_import_failed_at is not None
+        and time.monotonic() - _litellm_import_failed_at < _IMPORT_FAILURE_TTL_SECONDS
+    ):
+        raise AIProviderUnavailableError(
+            f"The AI client library could not be loaded: {_litellm_import_error}"
+        )
+
+    try:
+        import litellm
+    except BaseException as exc:
+        _litellm_import_failed_at = time.monotonic()
+        _litellm_import_error = f"{type(exc).__name__}: {exc}"[:200]
+        raise AIProviderUnavailableError(
+            f"The AI client library could not be loaded: {_litellm_import_error}"
+        ) from exc
+
+    _litellm_module = litellm
+    _litellm_import_failed_at = None
+    return litellm
+
+
+def reset_litellm_import_state() -> None:
+    global _litellm_module, _litellm_import_failed_at, _litellm_import_error
+
+    _litellm_module = None
+    _litellm_import_failed_at = None
+    _litellm_import_error = ""
+
+
+def _as_provider_message(message: ModelMessage) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "role": message.role.value,
+        "content": message.content,
+    }
+
+    if message.tool_calls:
+        payload["tool_calls"] = [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments),
+                },
+            }
+            for call in message.tool_calls
+        ]
+
+    if message.tool_call_id:
+        payload["tool_call_id"] = message.tool_call_id
+
+    if message.name:
+        payload["name"] = message.name
+
+    return payload
+
+
+def _as_tool_calls(raw: Any) -> list[ModelToolCall]:
+    calls: list[ModelToolCall] = []
+
+    for item in raw or []:
+        function = getattr(item, "function", None) or {}
+        name = getattr(function, "name", None) or (
+            function.get("name") if isinstance(function, dict) else None
+        )
+        if not name:
+            continue
+
+        raw_arguments = getattr(function, "arguments", None) or (
+            function.get("arguments") if isinstance(function, dict) else None
+        )
+        try:
+            arguments = json.loads(raw_arguments) if raw_arguments else {}
+        except (TypeError, ValueError):
+            # A malformed argument blob must not abort the loop; the tool
+            # simply runs with its defaults.
+            arguments = {}
+
+        calls.append(
+            ModelToolCall(
+                id=str(getattr(item, "id", None) or name),
+                name=str(name),
+                arguments=arguments if isinstance(arguments, dict) else {},
+            )
+        )
+
+    return calls
 
 
 class LiteLLMModelGateway:
@@ -69,15 +185,9 @@ class LiteLLMModelGateway:
         self,
         request: ModelRequest,
     ) -> dict[str, Any]:
-        return {
+        kwargs: dict[str, Any] = {
             "model": self._model_identifier(request),
-            "messages": [
-                {
-                    "role": message.role.value,
-                    "content": message.content,
-                }
-                for message in request.messages
-            ],
+            "messages": [_as_provider_message(message) for message in request.messages],
             "temperature": (
                 request.temperature
                 if request.temperature is not None
@@ -98,11 +208,21 @@ class LiteLLMModelGateway:
             "api_version": self._api_version,
         }
 
+        if request.tools:
+            kwargs["tools"] = [
+                {"type": "function", "function": tool} for tool in request.tools
+            ]
+            # Nudging a tool on the first round keeps the model from answering
+            # a lineage question from memory instead of from evidence.
+            kwargs["tool_choice"] = "required" if request.require_tool else "auto"
+
+        return kwargs
+
     async def generate(
         self,
         request: ModelRequest,
     ) -> ModelResponse:
-        import litellm
+        litellm = _load_litellm()
 
         try:
             result = await litellm.acompletion(**self._call_kwargs(request))
@@ -114,6 +234,7 @@ class LiteLLMModelGateway:
 
         return ModelResponse(
             content=choice.message.content or "",
+            tool_calls=_as_tool_calls(getattr(choice.message, "tool_calls", None)),
             provider=self._provider,
             model=self._model_identifier(request),
             usage=TokenUsage(
@@ -128,7 +249,7 @@ class LiteLLMModelGateway:
         self,
         request: ModelRequest,
     ) -> AsyncIterator[ModelChunk]:
-        import litellm
+        litellm = _load_litellm()
 
         try:
             response_stream = await litellm.acompletion(
@@ -152,6 +273,9 @@ class LiteLLMModelGateway:
     def _map_error(
         exc: Exception,
     ) -> Exception:
+        if isinstance(exc, AppException):
+            return exc
+
         import litellm.exceptions as litellm_exceptions
 
         if isinstance(exc, litellm_exceptions.AuthenticationError):

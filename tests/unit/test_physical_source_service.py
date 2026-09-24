@@ -353,3 +353,66 @@ in
     assert result.source_count == 1
     assert result.sources[0].provider == "sqlserver"
     assert result.sources[0].server == "real.example"
+
+
+def test_snowflake_second_argument_is_a_warehouse_not_a_database():
+    # `Snowflake.Databases(server, warehouse)` -- reading COMPUTE_WH as the
+    # database mislabels every table whose database is only reachable through
+    # the navigation step.
+    model = _semantic_model(
+        """
+let
+    Source = Snowflake.Databases("acme.snowflakecomputing.com","COMPUTE_WH"),
+    POC_DB_Database = Source{[Name="POC_DB",Kind="Database"]}[Data],
+    HR_Schema = POC_DB_Database{[Name="HUMAN_RESOURCES",Kind="Schema"]}[Data],
+    EMPLOYEES_Table = HR_Schema{[Name="EMPLOYEES",Kind="Table"]}[Data]
+in
+    EMPLOYEES_Table
+"""
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(model)
+
+    source = next(source for source in result.sources if source.provider == "snowflake")
+    assert source.database == "POC_DB"
+    assert source.warehouse == "COMPUTE_WH"
+    assert source.schema_name == "HUMAN_RESOURCES"
+    assert source.object_name == "EMPLOYEES"
+
+
+def test_navigated_database_is_used_when_a_native_query_omits_it():
+    # A two-part name in the SQL leaves the database implicit, so it has to be
+    # taken from the `Kind="Database"` navigation step.
+    model = _semantic_model(
+        """
+let
+    Source = Snowflake.Databases("acme.snowflakecomputing.com","COMPUTE_WH"),
+    POC_DB_Database = Source{[Name="POC_DB",Kind="Database"]}[Data],
+    RunQuery = Value.NativeQuery(
+        POC_DB_Database,
+        "SELECT EMPLOYEE_ID FROM HUMAN_RESOURCES.EMPLOYEES"
+    )
+in
+    RunQuery
+"""
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(model)
+
+    source = next(source for source in result.sources if source.provider == "snowflake")
+    assert source.database == "POC_DB"
+    assert source.schema_name == "HUMAN_RESOURCES"
+    assert source.object_name == "EMPLOYEES"
+
+
+def test_sql_database_second_argument_is_still_a_database():
+    model = _semantic_model(
+        'Sql.Database("sql.example.com", "WAREHOUSE")'
+        '{[Schema="dbo",Item="FactSales"]}[Data]'
+    )
+
+    result = PhysicalSourceDiscoveryService().discover(model)
+
+    source = next(source for source in result.sources if source.provider == "sqlserver")
+    assert source.database == "WAREHOUSE"
+    assert source.warehouse is None
