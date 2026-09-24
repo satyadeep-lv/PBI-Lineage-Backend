@@ -1,7 +1,10 @@
 import pytest
 
 import app.services.auth.microsoft_device_auth_service as service_module
-from app.core.exceptions import InsufficientPermissionsError
+from app.core.exceptions import (
+    InsufficientPermissionsError,
+    ProviderAuthenticationFailedError,
+)
 from app.core.microsoft_auth import FABRIC_SCOPES
 from app.services.auth.device_auth_store import (
     DeviceAuthSession,
@@ -63,6 +66,72 @@ class PassingFabricClient:
 class FailingFabricClient:
     async def validate_connection(self, access_token):
         raise InsufficientPermissionsError("fabric")
+
+
+class FailingDeviceFlowApp:
+    def initiate_device_flow(self, *, scopes):
+        raise RuntimeError("provider details must not escape")
+
+
+class RejectedDeviceFlowApp:
+    def initiate_device_flow(self, *, scopes):
+        return {"error": "invalid_client", "error_description": "sensitive detail"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "application",
+    [FailingDeviceFlowApp(), RejectedDeviceFlowApp()],
+)
+async def test_start_maps_msal_device_flow_failures_to_authentication_error(
+    monkeypatch,
+    application,
+):
+    monkeypatch.setattr(
+        service_module.msal,
+        "PublicClientApplication",
+        lambda **kwargs: application,
+    )
+
+    with pytest.raises(ProviderAuthenticationFailedError) as exc_info:
+        await MicrosoftDeviceAuthService().start(
+            tenant_id="tenant",
+            client_id="client",
+        )
+
+    assert exc_info.value.provider == "powerbi"
+    assert "sensitive detail" not in str(exc_info.value)
+    assert "provider details" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_start_fabric_maps_msal_device_flow_failure_to_authentication_error(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        service_module.msal,
+        "PublicClientApplication",
+        lambda **kwargs: RejectedDeviceFlowApp(),
+    )
+    session_id = "fabric-device-start-failed"
+    save_device_session(
+        session_id,
+        DeviceAuthSession(
+            tenant_id="tenant",
+            client_id="client",
+        ),
+    )
+
+    try:
+        with pytest.raises(ProviderAuthenticationFailedError) as exc_info:
+            await MicrosoftDeviceAuthService().start_fabric_authentication(
+                session_id=session_id,
+            )
+
+        assert exc_info.value.provider == "fabric"
+        assert "sensitive detail" not in str(exc_info.value)
+    finally:
+        delete_device_session(session_id)
 
 
 @pytest.mark.asyncio
