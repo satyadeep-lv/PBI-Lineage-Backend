@@ -2,7 +2,7 @@ from app.ai.agents.base import build_bundle
 from app.ai.models.context import ResolvedAIContext
 from app.ai.models.enums import AIAnswerStatus
 from app.ai.models.evidence import EvidenceBundle
-from app.ai.tools import lineage_tools, report_tools
+from app.ai.tools import dossier_tools, report_tools
 
 NAME = "report_agent"
 
@@ -26,12 +26,12 @@ class ReportAgent:
                 or ["Could not resolve the requested report."],
             )
 
+        # The report dossier answers "what is it, which model powers it,
+        # which measures does it use, where does its data come from"; the
+        # per-visual field list is kept for "what does this chart show".
         evidence = [
-            *report_tools.get_report_summary(context),
-            *report_tools.get_report_pages(context),
+            *dossier_tools.report_dossier(context),
             *report_tools.get_report_visuals(context),
-            *lineage_tools.get_semantic_model_details(context),
-            *lineage_tools.get_physical_sources(context),
         ]
 
         return build_bundle(

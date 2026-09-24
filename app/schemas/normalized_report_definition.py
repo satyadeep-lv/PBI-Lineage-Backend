@@ -9,6 +9,9 @@ class VisualFieldReference(BaseModel):
         "measure",
         "hierarchy",
         "hierarchy_level",
+        # A DAX calculation defined on the visual itself. It has no semantic
+        # model object to match; it is surfaced so it is not silently absent.
+        "visual_calculation",
     ]
 
     table_name: str | None = None

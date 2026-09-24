@@ -2,7 +2,7 @@ from app.ai.agents.base import build_bundle
 from app.ai.models.context import ResolvedAIContext
 from app.ai.models.enums import AIAnswerStatus
 from app.ai.models.evidence import EvidenceBundle
-from app.ai.tools import impact_tools, lineage_tools, measure_tools
+from app.ai.tools import dossier_tools, measure_tools
 
 NAME = "measure_agent"
 
@@ -56,17 +56,14 @@ class MeasureAgent:
                 ],
             )
 
-        # Physical sources/dependencies reachable upstream of this specific
-        # object, and its downstream impact with distance — bounded-depth,
-        # not the entire enterprise graph.
-        upstream = lineage_tools.get_upstream_lineage(context)
-        impact = impact_tools.analyze_impact(context)
+        # The whole picture, not just the DAX: the model it lives in, the
+        # semantic and database lineage under it, what is built on it, and
+        # the visuals it reaches.
+        evidence = dossier_tools.object_dossier(context) or definition
 
         conflict = None
         if resolved.object_type == "measure":
             conflict = measure_tools.detect_measure_conflict(context)
-
-        evidence = [*definition, *upstream, *impact]
 
         if conflict is not None:
             return build_bundle(

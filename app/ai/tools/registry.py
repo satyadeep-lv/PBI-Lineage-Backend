@@ -35,11 +35,14 @@ _TOOLS: tuple[Tool, ...] = (
     Tool(
         name="explain_object",
         description=(
-            "Explain one measure or calculated column: its exact DAX, a "
-            "plain-language reading of it, the semantic objects and database "
-            "tables it reads from, and what downstream depends on it. Use "
-            "this for any 'what is X', 'explain X' or 'how is X calculated' "
-            "question."
+            "The complete picture of one measure, column or table: which "
+            "semantic model and table it belongs to, its exact DAX and a "
+            "plain-language reading, the measures and columns it reads "
+            "(semantic lineage), the database tables and columns behind "
+            "them (database lineage), the measures and columns built on it, "
+            "the tables affected, and every report visual it reaches. Use "
+            "this for any 'what is X', 'explain X', 'how is X calculated', "
+            "'where does X come from' or 'what uses X' question."
         ),
         requires_context=frozenset({"semantic_model"}),
         handler=agent_tools.explain_object,
@@ -48,9 +51,11 @@ _TOOLS: tuple[Tool, ...] = (
     Tool(
         name="object_lineage",
         description=(
-            "Trace what an object reads from (upstream) or what would break "
-            "if it changed (downstream). Use for impact and dependency "
-            "questions."
+            "One direction of explain_object: upstream (the measures, "
+            "columns and database tables an object reads) or downstream "
+            "(the measures, columns, tables and report visuals that would "
+            "break if it changed). Prefer explain_object unless only one "
+            "direction was asked for."
         ),
         requires_context=frozenset({"semantic_model"}),
         handler=agent_tools.object_lineage,
@@ -69,10 +74,12 @@ _TOOLS: tuple[Tool, ...] = (
     Tool(
         name="model_overview",
         description=(
-            "List what the semantic model in context contains: its tables, "
-            "the measures in each, and how many columns. Use this for "
-            "inventory or orientation questions such as 'what measures are "
-            "there' or 'what am I looking at'."
+            "Describe the semantic model in context: its name and workspace, "
+            "every table (columns, measures, storage mode, database source), "
+            "the relationships between tables, each measure's DAX, and the "
+            "reports built on it. Use this for inventory or orientation "
+            "questions such as 'what measures are there', 'what tables are "
+            "in this model' or 'what am I looking at'."
         ),
         requires_context=frozenset({"semantic_model"}),
         handler=agent_tools.model_overview,
@@ -103,7 +110,8 @@ _TOOLS: tuple[Tool, ...] = (
         name="physical_sources",
         description=(
             "List the databases, schemas and tables the semantic model "
-            "ultimately reads from, including across a composite model."
+            "ultimately reads from, and which semantic table each one feeds, "
+            "following composite-model links into other workspaces."
         ),
         requires_context=frozenset({"semantic_model"}),
         handler=agent_tools.physical_sources,
@@ -112,8 +120,13 @@ _TOOLS: tuple[Tool, ...] = (
     Tool(
         name="report_overview",
         description=(
-            "Summarise the report in context: its format, pages, and how "
-            "many visuals it has."
+            "The complete picture of the report in context: its name, the "
+            "semantic model and workspace behind it, every page and its "
+            "visuals, the measures (with DAX) and columns those visuals "
+            "use, and the database tables that data comes from. Use this for "
+            "any question about the report, including 'which measures are "
+            "used', 'which semantic model powers it' and 'where does the "
+            "data come from'."
         ),
         requires_context=frozenset({"report_definition"}),
         handler=agent_tools.report_overview,

@@ -309,13 +309,13 @@ class ExplorerService:
                 if needs_report_definition
                 else None
             )
-            semantic_model_id = self._resolve_semantic_model_id(
+            semantic_model_id = self.resolve_semantic_model_id(
                 selection,
                 report,
                 report_definition,
             )
             semantic_model_workspace_id = (
-                self._resolve_semantic_model_workspace_id(selection, report)
+                self.resolve_semantic_model_workspace_id(selection, report)
                 if semantic_model_id
                 else None
             )
@@ -656,7 +656,7 @@ class ExplorerService:
         )
 
     @staticmethod
-    def _resolve_semantic_model_workspace_id(
+    def resolve_semantic_model_workspace_id(
         selection: ExplorerReportSelection,
         report: Report,
     ) -> str:
@@ -675,7 +675,7 @@ class ExplorerService:
         return str(selection.workspace_id)
 
     @staticmethod
-    def _resolve_semantic_model_id(
+    def resolve_semantic_model_id(
         selection: ExplorerReportSelection,
         report: Report,
         report_definition: NormalizedReportDefinitionResponse | None,

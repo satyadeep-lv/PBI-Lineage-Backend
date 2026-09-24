@@ -61,6 +61,27 @@ def test_analyze_extracts_measure_column_and_table_dependencies():
     assert result.cycle_count == 0
 
 
+def test_a_table_name_inside_a_bracketed_reference_is_not_a_table_reference():
+    # `[Total Sales]` contains the table name `Sales`; reading it as a bare
+    # table reference gave every such measure a false dependency on the
+    # whole table.
+    model = _model()
+    model.tables[0].measures.append(
+        ParsedSemanticModelMeasure(name="Row Count", expression="COUNTROWS(Sales)")
+    )
+
+    result = DaxDependencyService().analyze(model)
+    edges = {
+        (edge.source.qualified_name, edge.target.qualified_name)
+        for edge in result.dependencies
+    }
+
+    assert ("Sales", "Sales[Sales With Tax]") not in edges
+    assert ("Sales[Total Sales]", "Sales[Sales With Tax]") in edges
+    # A genuinely bare table reference is still found.
+    assert ("Sales", "Sales[Row Count]") in edges
+
+
 def test_analyze_ignores_comments_and_string_literals():
     model = _model()
     model.tables[0].measures[

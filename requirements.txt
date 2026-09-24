@@ -10,3 +10,4 @@ pydantic-settings==2.15.0
 pywin32==312; platform_system == "Windows"
 snowflake-connector-python==4.7.2
 snowflake-snowpark-python==1.54.0
+truststore==0.10.4

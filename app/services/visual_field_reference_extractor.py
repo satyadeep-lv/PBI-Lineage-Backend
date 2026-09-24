@@ -274,6 +274,24 @@ def _parse_field_expression(
 
         return [reference] if reference is not None else []
 
+    visual_calculation = field.get("NativeVisualCalculation")
+
+    if isinstance(visual_calculation, dict):
+        #
+        # Its DAX is a plain string, so the generic traversal below would
+        # skip it and the field would vanish from the visual entirely.
+        #
+        return [
+            VisualFieldReference(
+                object_type="visual_calculation",
+                object_name=_optional_string(visual_calculation.get("Name")),
+                usage=usage,
+                role=role,
+                query_ref=query_ref,
+                active=active,
+            )
+        ]
+
     #
     # Handle semantic-expression wrappers that
     # contain Column/Measure deeper inside them.

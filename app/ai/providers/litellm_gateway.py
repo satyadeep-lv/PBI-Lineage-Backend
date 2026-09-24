@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -52,6 +53,10 @@ def _load_litellm() -> Any:
         raise AIProviderUnavailableError(
             f"The AI client library could not be loaded: {_litellm_import_error}"
         )
+
+    # Use the model-cost map bundled with the package instead of fetching it
+    # from GitHub on import, which added ~9s to the first request.
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
     try:
         import litellm

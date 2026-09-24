@@ -2,7 +2,7 @@ from app.ai.agents.base import build_bundle
 from app.ai.models.context import ResolvedAIContext
 from app.ai.models.enums import AIAnswerStatus
 from app.ai.models.evidence import EvidenceBundle
-from app.ai.tools import lineage_tools, report_tools
+from app.ai.tools import dossier_tools
 
 NAME = "semantic_model_agent"
 
@@ -25,11 +25,11 @@ class SemanticModelAgent:
         question: str,
         context: ResolvedAIContext,
     ) -> EvidenceBundle:
+        # With a report open, "what am I looking at" is first about that
+        # report; the model behind it follows.
         evidence = [
-            *lineage_tools.get_semantic_model_details(context),
-            *report_tools.get_report_summary(context),
-            *report_tools.get_report_pages(context),
-            *lineage_tools.get_physical_sources(context),
+            *dossier_tools.report_dossier(context),
+            *dossier_tools.model_dossier(context),
         ]
 
         if not evidence:
@@ -50,6 +50,19 @@ class SemanticModelAgent:
             question=question,
             context=context,
             agent=NAME,
-            evidence=evidence,
+            evidence=_without_repeated_coverage(evidence),
             status=AIAnswerStatus.ANSWERED,
         )
+
+
+def _without_repeated_coverage(evidence):
+    """Both dossiers restate the context's coverage notes; keep one copy."""
+    seen: set[str] = set()
+    kept = []
+    for item in evidence:
+        if item.object_type == "coverage":
+            if item.display_value in seen:
+                continue
+            seen.add(item.display_value or "")
+        kept.append(item)
+    return kept
