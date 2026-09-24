@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from app.ai.composition.dax_narrator import describe
 from app.ai.models.context import ResolvedAIContext
 from app.ai.models.enums import VerificationStatus
 from app.ai.models.evidence import EvidenceConflict, EvidenceItem
@@ -72,6 +73,10 @@ def get_measure_definition(context: ResolvedAIContext) -> list[EvidenceItem]:
             fact_type="definition",
             source_type="tmdl",
             value=measure.expression,
+            plain_language=describe(
+                measure.expression,
+                object_name=measure.name,
+            ),
             workspace_id=context.workspace_id,
             semantic_model_id=context.semantic_model_id,
             verification_status=VerificationStatus.VERIFIED,
@@ -103,6 +108,10 @@ def get_calculated_column_definition(
             fact_type="definition",
             source_type="tmdl",
             value=column.expression,
+            plain_language=describe(
+                column.expression,
+                object_name=column.name,
+            ),
             workspace_id=context.workspace_id,
             semantic_model_id=context.semantic_model_id,
             verification_status=VerificationStatus.VERIFIED,

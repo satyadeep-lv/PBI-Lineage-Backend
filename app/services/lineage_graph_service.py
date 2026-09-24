@@ -425,6 +425,10 @@ class LineageGraphService:
                     properties={
                         "visual_id": match.visual_id,
                         "visual_type": match.visual_type,
+                        "visual_title": match.visual_title,
+                        "page_name": match.page_name,
+                        "page_display_name": match.page_display_name,
+                        "report_id": lineage.report_id,
                     },
                 ),
             )

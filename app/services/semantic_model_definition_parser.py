@@ -4,6 +4,7 @@ import re
 
 from app.schemas.parsed_semantic_model import (
     ParsedSemanticModelColumn,
+    ParsedSemanticModelExpression,
     ParsedSemanticModelHierarchy,
     ParsedSemanticModelHierarchyLevel,
     ParsedSemanticModelMeasure,
@@ -22,6 +23,24 @@ TMDL_FIELD_REFERENCE_PATTERN = re.compile(
 )
 
 PROPERTY_KEY_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
+
+# Trailing metadata on a shared `expression` block. Everything else inside
+# one is M code and must be kept verbatim -- including lines such as
+# `Source = AnalysisServices.Database(...)`, which look like a property
+# assignment but are the part that actually names the upstream model.
+EXPRESSION_METADATA_KEYS = frozenset(
+    {
+        "lineageTag",
+        "queryGroup",
+        "description",
+        "displayFolder",
+    }
+)
+EXPRESSION_METADATA_PREFIXES = (
+    "annotation ",
+    "extendedProperty ",
+    "changedProperty ",
+)
 
 
 class SemanticModelDefinitionParser:
@@ -76,6 +95,12 @@ class SemanticModelDefinitionParser:
                 result=result,
             )
 
+        for table in result.tables:
+            for measure in table.measures:
+                measure.expression = self._strip_code_fence(measure.expression)
+            for column in table.columns:
+                column.expression = self._strip_code_fence(column.expression)
+
         return result
 
     def _parse_tmdl_part(
@@ -91,12 +116,31 @@ class SemanticModelDefinitionParser:
         current_hierarchy = None
         current_partition = None
         current_relationship = None
+        current_expression = None
         partition_source_started = False
 
         for raw_line in text.splitlines():
             line = raw_line.strip()
 
             if not line or line.startswith("//"):
+                continue
+
+            if current_table is None and line.startswith("expression "):
+                name, expression = self._split_assignment(
+                    line.removeprefix("expression ").strip()
+                )
+                current_expression = ParsedSemanticModelExpression(
+                    name=self._clean_name(name),
+                    source_path=source_path,
+                    expression=expression,
+                )
+                result.expressions.append(current_expression)
+                current_column = None
+                current_measure = None
+                current_hierarchy = None
+                current_partition = None
+                current_relationship = None
+                partition_source_started = False
                 continue
 
             if line.startswith("table "):
@@ -115,10 +159,11 @@ class SemanticModelDefinitionParser:
                 current_hierarchy = None
                 current_partition = None
                 current_relationship = None
+                current_expression = None
                 partition_source_started = False
                 continue
 
-            if line.startswith("relationship"):
+            if line.startswith("relationship "):
                 name = self._clean_optional_name(line.removeprefix("relationship"))
                 current_relationship = ParsedSemanticModelRelationship(
                     name=name,
@@ -130,6 +175,7 @@ class SemanticModelDefinitionParser:
                 current_measure = None
                 current_hierarchy = None
                 current_partition = None
+                current_expression = None
                 partition_source_started = False
                 continue
 
@@ -205,9 +251,34 @@ class SemanticModelDefinitionParser:
 
             key, value = self._split_property(line)
 
-            if current_partition:
+            if current_expression is not None:
+                if key == "lineageTag":
+                    current_expression.lineage_tag = value
+                elif not (
+                    key in EXPRESSION_METADATA_KEYS
+                    or line.startswith(EXPRESSION_METADATA_PREFIXES)
+                ):
+                    current_expression.expression = self._append_expression(
+                        current_expression.expression,
+                        line,
+                    )
+            elif current_partition:
                 if key == "mode" and not partition_source_started:
                     current_partition.mode = value
+                elif (
+                    key
+                    in {
+                        "entityName",
+                        "expressionSource",
+                        "schemaName",
+                    }
+                    and not partition_source_started
+                ):
+                    self._apply_entity_partition_property(
+                        current_partition,
+                        key,
+                        value,
+                    )
                 elif key == "source":
                     current_partition.expression = value
                     partition_source_started = True
@@ -233,6 +304,7 @@ class SemanticModelDefinitionParser:
 
                 if (
                     not applied
+                    and not self._is_metadata_line(line)
                     and not self._looks_like_property_key(key)
                     and current_column.expression is not None
                 ):
@@ -247,7 +319,11 @@ class SemanticModelDefinitionParser:
                     value,
                 )
 
-                if not applied and not self._looks_like_property_key(key):
+                if (
+                    not applied
+                    and not self._is_metadata_line(line)
+                    and not self._looks_like_property_key(key)
+                ):
                     current_measure.expression = self._append_expression(
                         current_measure.expression,
                         line,
@@ -257,6 +333,14 @@ class SemanticModelDefinitionParser:
                     current_hierarchy.levels[-1].column = self._clean_name(value)
             elif current_relationship:
                 self._apply_relationship_property(current_relationship, key, value)
+            elif current_table is not None and key in {
+                "lineageTag",
+                "sourceLineageTag",
+            }:
+                if key == "lineageTag":
+                    current_table.lineage_tag = value
+                else:
+                    current_table.source_lineage_tag = value
             elif (
                 current_table
                 and current_table.expression is not None
@@ -341,6 +425,41 @@ class SemanticModelDefinitionParser:
         return bool(key and PROPERTY_KEY_PATTERN.match(key))
 
     @staticmethod
+    def _strip_code_fence(expression: str | None) -> str | None:
+        """Drop the ``` delimiters TMDL wraps a multi-line value in.
+
+        They are a block marker, not part of the DAX, but they survived into
+        every multi-line measure -- so the expression shown to a user began
+        and ended with a code fence.
+        """
+        if expression is None:
+            return None
+
+        text = expression.strip()
+
+        if not text.startswith("```"):
+            return expression
+
+        text = text.removeprefix("```")
+        if text.endswith("```"):
+            text = text[: -len("```")]
+
+        return text.strip() or expression
+
+    @staticmethod
+    def _is_metadata_line(line: str) -> bool:
+        """TMDL metadata that trails a measure or calculated column.
+
+        `PROPERTY_KEY_PATTERN` only matches a single bare word, so keys such
+        as `annotation PBI_FormatHint` were not recognised as properties and
+        were appended to the DAX instead -- every measure in a real model
+        came back with `annotation PBI_FormatHint = {...}` stuck on the end
+        of its expression. DAX has no such construct, so matching the prefix
+        cannot swallow real expression text.
+        """
+        return line.startswith(EXPRESSION_METADATA_PREFIXES)
+
+    @staticmethod
     def _parse_field_reference(value: str) -> tuple[str | None, str | None]:
         match = FIELD_REFERENCE_PATTERN.match(value.strip())
 
@@ -354,6 +473,19 @@ class SemanticModelDefinitionParser:
             SemanticModelDefinitionParser._clean_name(match.group("table")),
             SemanticModelDefinitionParser._clean_name(match.group("field")),
         )
+
+    def _apply_entity_partition_property(
+        self,
+        partition: ParsedSemanticModelPartition,
+        key: str,
+        value: str,
+    ) -> None:
+        if key == "entityName":
+            partition.entity_name = self._clean_name(value)
+        elif key == "expressionSource":
+            partition.expression_source = self._clean_name(value)
+        elif key == "schemaName":
+            partition.schema_name = self._clean_name(value)
 
     def _apply_column_property(
         self,
@@ -375,6 +507,14 @@ class SemanticModelDefinitionParser:
 
         if key == "isHidden":
             column.is_hidden = self._to_bool(value)
+            return True
+
+        if key == "lineageTag":
+            column.lineage_tag = value.strip()
+            return True
+
+        if key == "sourceLineageTag":
+            column.source_lineage_tag = value.strip()
             return True
 
         return False

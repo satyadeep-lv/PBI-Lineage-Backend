@@ -7,6 +7,7 @@ from app.core.exceptions import (
     UpstreamInvalidResponseError,
 )
 from app.schemas.xmla_metadata import (
+    XmlaCalcDependency,
     XmlaMetadataWarning,
     XmlaSemanticModelColumn,
     XmlaSemanticModelHierarchy,
@@ -170,6 +171,14 @@ class XmlaMetadataService:
             )
         ]
 
+        calc_dependencies = [
+            self._map_calc_dependency(raw_dependency)
+            for raw_dependency in _optional_list(
+                raw_metadata,
+                "calc_dependencies",
+            )
+        ]
+
         warnings = [
             self._map_warning(raw_warning)
             for raw_warning in _optional_list(
@@ -198,6 +207,7 @@ class XmlaMetadataService:
             partition_count=sum(len(table.partitions) for table in tables),
             tables=tables,
             relationships=relationships,
+            calc_dependencies=calc_dependencies,
             warnings=warnings,
         )
 
@@ -304,6 +314,11 @@ class XmlaMetadataService:
                 column,
                 "lineage_tag",
                 "lineageTag",
+            ),
+            source_lineage_tag=_optional_string(
+                column,
+                "source_lineage_tag",
+                "sourceLineageTag",
             ),
         )
 
@@ -469,6 +484,52 @@ class XmlaMetadataService:
                 relationship,
                 "security_filtering_behavior",
                 "securityFilteringBehavior",
+            ),
+        )
+
+    def _map_calc_dependency(
+        self,
+        raw_dependency: Any,
+    ) -> XmlaCalcDependency:
+        dependency = _required_dict(raw_dependency)
+
+        return XmlaCalcDependency(
+            object_type=_optional_string(
+                dependency,
+                "object_type",
+                "objectType",
+            ),
+            table=_optional_string(
+                dependency,
+                "table",
+            ),
+            object=_optional_string(
+                dependency,
+                "object",
+            ),
+            expression=_optional_string(
+                dependency,
+                "expression",
+            ),
+            referenced_object_type=_required_string(
+                dependency,
+                "referenced_object_type",
+                "referencedObjectType",
+            ),
+            referenced_table=_optional_string(
+                dependency,
+                "referenced_table",
+                "referencedTable",
+            ),
+            referenced_object=_optional_string(
+                dependency,
+                "referenced_object",
+                "referencedObject",
+            ),
+            referenced_expression=_optional_string(
+                dependency,
+                "referenced_expression",
+                "referencedExpression",
             ),
         )
 

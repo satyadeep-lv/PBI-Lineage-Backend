@@ -12,6 +12,7 @@ from app.api.dependencies.credentials import (
     get_fabric_access_token,
     get_powerbi_access_token,
 )
+from app.domain.semantic_model_filters import exclude_auto_date_tables
 from app.schemas.normalized_report_definition import (
     NormalizedReportDefinitionResponse,
 )
@@ -35,6 +36,9 @@ from app.schemas.report_page import (
 )
 from app.schemas.report_semantic_lineage import (
     ReportSemanticLineageResponse,
+)
+from app.schemas.semantic_column_lineage import (
+    SemanticModelColumnLineageResponse,
 )
 from app.schemas.semantic_model import (
     SemanticModelListResponse,
@@ -62,6 +66,9 @@ from app.services.report_semantic_lineage_service import (
 )
 from app.services.report_service import (
     ReportService,
+)
+from app.services.semantic_column_lineage_service import (
+    SemanticColumnLineageService,
 )
 from app.services.semantic_model_definition_service import (
     SemanticModelDefinitionService,
@@ -355,14 +362,64 @@ async def get_workspace_parsed_semantic_model_definition(
             alias="format",
         ),
     ] = "TMDL",
+    include_auto_date_tables: Annotated[
+        bool,
+        Query(
+            alias="includeAutoDateTables",
+        ),
+    ] = False,
 ) -> ParsedSemanticModelResponse:
     service = SemanticModelDefinitionService()
 
-    return await service.get_parsed_definition(
+    parsed = await service.get_parsed_definition(
         workspace_id=str(workspace_id),
         semantic_model_id=str(semantic_model_id),
         access_token=access_token,
         definition_format=definition_format,
+    )
+
+    if include_auto_date_tables:
+        return parsed
+
+    return exclude_auto_date_tables(parsed)
+
+
+@router.post(
+    ("/{workspace_id}/semantic-models/{semantic_model_id}/column-lineage"),
+    response_model=SemanticModelColumnLineageResponse,
+)
+async def get_workspace_semantic_model_column_lineage(
+    workspace_id: UUID,
+    semantic_model_id: UUID,
+    access_token: Annotated[
+        str,
+        Depends(get_powerbi_access_token),
+    ],
+    workspace_name: Annotated[
+        str | None,
+        Query(
+            alias="workspaceName",
+            min_length=1,
+            max_length=256,
+        ),
+    ] = None,
+    database_name: Annotated[
+        str | None,
+        Query(
+            alias="databaseName",
+            min_length=1,
+            max_length=256,
+        ),
+    ] = None,
+) -> SemanticModelColumnLineageResponse:
+    service = SemanticColumnLineageService()
+
+    return await service.build_lineage_from_xmla(
+        workspace_id=str(workspace_id),
+        semantic_model_id=str(semantic_model_id),
+        access_token=access_token,
+        workspace_name=workspace_name,
+        database_name=database_name,
     )
 
 
@@ -442,6 +499,12 @@ async def get_workspace_semantic_model_metadata(
             alias="format",
         ),
     ] = "TMDL",
+    include_auto_date_tables: Annotated[
+        bool,
+        Query(
+            alias="includeAutoDateTables",
+        ),
+    ] = False,
 ) -> SemanticModelMetadataResponse:
     service = SemanticModelMetadataService()
 
@@ -453,6 +516,7 @@ async def get_workspace_semantic_model_metadata(
         workspace_name=workspace_name,
         database_name=database_name,
         definition_format=definition_format,
+        include_auto_date_tables=include_auto_date_tables,
     )
 
 

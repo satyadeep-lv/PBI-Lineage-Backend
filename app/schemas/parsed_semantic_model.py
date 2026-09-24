@@ -14,6 +14,8 @@ class ParsedSemanticModelColumn(BaseModel):
     source_column: str | None = None
     expression: str | None = None
     is_hidden: bool | None = None
+    lineage_tag: str | None = None
+    source_lineage_tag: str | None = None
 
 
 class ParsedSemanticModelMeasure(BaseModel):
@@ -48,18 +50,40 @@ class ParsedSemanticModelHierarchy(BaseModel):
     levels: list[ParsedSemanticModelHierarchyLevel] = Field(default_factory=list)
 
 
+class ParsedSemanticModelExpression(BaseModel):
+    """A model-level shared M expression (TMDL ``expression <name> = ...``).
+
+    DirectQuery-to-semantic-model tables keep their connection here rather
+    than inline on the partition, so resolving one is the only way to see
+    what such a table actually reads from.
+    """
+
+    name: str
+    source_path: str | None = None
+    expression: str | None = None
+    lineage_tag: str | None = None
+
+
 class ParsedSemanticModelPartition(BaseModel):
     name: str
     source_path: str | None = None
     mode: str | None = None
     source_type: str | None = None
     expression: str | None = None
+    entity_name: str | None = None
+    schema_name: str | None = None
+    expression_source: str | None = None
 
 
 class ParsedSemanticModelTable(BaseModel):
     name: str
     source_path: str | None = None
     expression: str | None = None
+    lineage_tag: str | None = None
+    # A composite model stamps the upstream table's `lineageTag` here, which
+    # is what lets a DirectQuery table be matched back to its origin even
+    # after either side has been renamed.
+    source_lineage_tag: str | None = None
     columns: list[ParsedSemanticModelColumn] = Field(default_factory=list)
     measures: list[ParsedSemanticModelMeasure] = Field(default_factory=list)
     hierarchies: list[ParsedSemanticModelHierarchy] = Field(default_factory=list)
@@ -72,4 +96,5 @@ class ParsedSemanticModelResponse(BaseModel):
     format: str | None = None
     tables: list[ParsedSemanticModelTable] = Field(default_factory=list)
     relationships: list[ParsedSemanticModelRelationship] = Field(default_factory=list)
+    expressions: list[ParsedSemanticModelExpression] = Field(default_factory=list)
     warnings: list[ParsedSemanticModelWarning] = Field(default_factory=list)

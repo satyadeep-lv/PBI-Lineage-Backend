@@ -7,7 +7,7 @@ from app.clients.snowflake_lineage_query_client import (
     SnowflakeLineageQueryClient,
 )
 from app.core.config import get_settings
-from app.core.exceptions import AppException, ProviderAuthenticationRequiredError
+from app.core.exceptions import ProviderAuthenticationRequiredError
 from app.domain.lineage_ids import stable_lineage_id
 from app.schemas.snowflake_lineage import (
     SnowflakeDeepLineageRequest,
@@ -24,6 +24,16 @@ from app.services.auth.snowflake_session_store import (
 )
 
 _SNOWFLAKE_BATCH_DEPTH = 5
+_MAX_WARNING_DETAIL = 300
+# How many queries may be in flight (or finished but unread) per worker. Keeps
+# the pool fed while capping how many result sets are alive at once.
+_INFLIGHT_CHUNK_MULTIPLIER = 2
+_MAX_WARNINGS = 500
+# Domains GET_LINEAGE can be re-rooted on. A STAGE or DATASET terminates the
+# walk; a view does not.
+_TRAVERSABLE_DOMAINS = frozenset(
+    {"TABLE", "VIEW", "MATERIALIZED VIEW", "EXTERNAL TABLE", "COLUMN"}
+)
 _SIMPLE_IDENTIFIER = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
 
 
@@ -31,6 +41,46 @@ _SIMPLE_IDENTIFIER = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
 class _TraversalRoot:
     reference: SnowflakeObjectReference
     level_offset: int
+
+
+class _WarningCollector:
+    """Deduplicates on the way in and stops growing at a hard cap.
+
+    Row-level warnings are emitted per bad row, so a wide traversal could
+    accumulate a warning list larger than the lineage it describes. The
+    response only ever exposed the deduplicated set, so nothing is lost by
+    collapsing them here instead of at the end.
+    """
+
+    def __init__(self, max_warnings: int = _MAX_WARNINGS) -> None:
+        self._max_warnings = max_warnings
+        self._seen: set[tuple[str, str, str | None]] = set()
+        self._warnings: list[SnowflakeLineageWarning] = []
+        self.overflowed = False
+
+    def add(self, warning: SnowflakeLineageWarning) -> None:
+        key = (warning.code, warning.message, warning.root_object_name)
+        if key in self._seen:
+            return
+        if len(self._warnings) >= self._max_warnings:
+            self.overflowed = True
+            return
+        self._seen.add(key)
+        self._warnings.append(warning)
+
+    def ordered(self) -> list[SnowflakeLineageWarning]:
+        if not self.overflowed:
+            return list(self._warnings)
+        return [
+            *self._warnings,
+            SnowflakeLineageWarning(
+                code="SNOWFLAKE_LINEAGE_WARNINGS_TRUNCATED",
+                message=(
+                    f"Only the first {self._max_warnings} distinct lineage "
+                    "warnings are reported."
+                ),
+            ),
+        ]
 
 
 @dataclass(frozen=True)
@@ -79,7 +129,7 @@ class SnowflakeDeepLineageService:
         root = self._root_reference(account_identifier, request)
         nodes = {root.object_id: root}
         edges: dict[tuple[str, str], SnowflakeDependency] = {}
-        warnings: list[SnowflakeLineageWarning] = []
+        warnings = _WarningCollector()
         frontier = [_TraversalRoot(reference=root, level_offset=0)]
         visited_roots: set[str] = set()
         query_count = 0
@@ -100,7 +150,7 @@ class SnowflakeDeepLineageService:
             remaining_queries = request.max_queries - query_count
             if remaining_queries <= 0:
                 truncated = True
-                warnings.append(
+                warnings.add(
                     self._warning(
                         "SNOWFLAKE_LINEAGE_QUERY_LIMIT_REACHED",
                         "The configured Snowflake lineage query limit was reached.",
@@ -110,7 +160,7 @@ class SnowflakeDeepLineageService:
             if len(pending) > remaining_queries:
                 pending = pending[:remaining_queries]
                 truncated = True
-                warnings.append(
+                warnings.add(
                     self._warning(
                         "SNOWFLAKE_LINEAGE_QUERY_LIMIT_REACHED",
                         "Some lineage frontier nodes were skipped at the query limit.",
@@ -123,97 +173,130 @@ class SnowflakeDeepLineageService:
             query_count += len(pending)
             next_frontier: dict[str, _TraversalRoot] = {}
             worker_count = min(request.max_concurrency, len(pending))
+            chunk_size = worker_count * _INFLIGHT_CHUNK_MULTIPLIER
             with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                futures = {
-                    executor.submit(
-                        self._query,
-                        connection,
-                        item,
-                        request,
-                    ): item
-                    for item in pending
-                }
-                for future in as_completed(futures):
-                    item = futures[future]
-                    try:
-                        batch_depth, rows = future.result()
-                    except AppException:
-                        if item.level_offset == 0:
-                            raise
-                        truncated = True
-                        warnings.append(
-                            self._warning(
-                                "SNOWFLAKE_LINEAGE_BRANCH_FAILED",
-                                (
-                                    "A non-root Snowflake lineage branch "
-                                    "could not be read."
-                                ),
-                                item.reference.qualified_name,
-                            )
-                        )
-                        continue
-
-                    for raw_row in rows:
-                        parsed = self._parse_row(
-                            account_identifier,
-                            raw_row,
-                            include_process=request.include_process,
-                        )
-                        if parsed is None:
-                            warnings.append(
+                # Submit in bounded chunks. A completed future keeps its
+                # rows alive until they are consumed, so submitting a whole
+                # wide frontier at once held every query's result set in
+                # memory at the same time.
+                for start_at in range(0, len(pending), chunk_size):
+                    chunk = pending[start_at : start_at + chunk_size]
+                    futures = {
+                        executor.submit(
+                            self._query,
+                            connection,
+                            item,
+                            request,
+                        ): item
+                        for item in chunk
+                    }
+                    for future in as_completed(futures):
+                        item = futures[future]
+                        try:
+                            batch_depth, rows = future.result()
+                        except Exception as error:
+                            # The future only wraps the upstream call, so catching
+                            # broadly here is a provider boundary rather than a
+                            # blanket. It has to be broad: the connector raises its
+                            # own exception types, and letting one escape loses the
+                            # whole traversal -- including every level already
+                            # walked -- instead of just that branch.
+                            if item.level_offset == 0:
+                                raise
+                            truncated = True
+                            warnings.add(
                                 self._warning(
-                                    "SNOWFLAKE_LINEAGE_ROW_INVALID",
-                                    "Snowflake returned an incomplete lineage row.",
+                                    "SNOWFLAKE_LINEAGE_BRANCH_FAILED",
+                                    (
+                                        "A non-root Snowflake lineage branch "
+                                        f"could not be read: {self._reason(error)}"
+                                    ),
                                     item.reference.qualified_name,
                                 )
                             )
                             continue
 
-                        actual_distance = item.level_offset + parsed.distance
-                        if actual_distance > request.max_depth:
-                            continue
-
-                        if not self._add_node(nodes, parsed.source, request.max_nodes):
-                            truncated = True
-                            continue
-                        if not self._add_node(nodes, parsed.target, request.max_nodes):
-                            truncated = True
-                            continue
-                        if not self._add_edge(
-                            edges,
-                            parsed,
-                            actual_distance,
-                            request.max_edges,
-                        ):
-                            truncated = True
-                            continue
-
-                        if (
-                            parsed.distance == batch_depth
-                            and actual_distance < request.max_depth
-                        ):
-                            boundary = (
-                                parsed.source
-                                if request.direction == "UPSTREAM"
-                                else parsed.target
+                        for raw_row in rows:
+                            parsed = self._parse_row(
+                                account_identifier,
+                                raw_row,
+                                include_process=request.include_process,
                             )
-                            if boundary.object_domain not in {"TABLE", "COLUMN"}:
+                            if parsed is None:
+                                warnings.add(
+                                    self._warning(
+                                        "SNOWFLAKE_LINEAGE_ROW_INVALID",
+                                        "Snowflake returned an incomplete lineage row.",
+                                        item.reference.qualified_name,
+                                    )
+                                )
                                 continue
-                            candidate = _TraversalRoot(
-                                reference=boundary,
-                                level_offset=actual_distance,
-                            )
-                            existing = next_frontier.get(boundary.object_id)
-                            if (
-                                existing is None
-                                or candidate.level_offset < existing.level_offset
-                            ):
-                                next_frontier[boundary.object_id] = candidate
 
+                            actual_distance = item.level_offset + parsed.distance
+                            if actual_distance > request.max_depth:
+                                continue
+
+                            if not self._add_node(
+                                nodes, parsed.source, request.max_nodes
+                            ):
+                                truncated = True
+                                continue
+                            if not self._add_node(
+                                nodes, parsed.target, request.max_nodes
+                            ):
+                                truncated = True
+                                continue
+                            if not self._add_edge(
+                                edges,
+                                parsed,
+                                actual_distance,
+                                request.max_edges,
+                            ):
+                                truncated = True
+                                continue
+
+                            if (
+                                parsed.distance == batch_depth
+                                and actual_distance < request.max_depth
+                            ):
+                                boundary = (
+                                    parsed.source
+                                    if request.direction == "UPSTREAM"
+                                    else parsed.target
+                                )
+                                if not self._is_traversable(boundary):
+                                    # This also dropped every VIEW, silently
+                                    # -- and a view is an ordinary link in a
+                                    # column's chain.
+                                    truncated = True
+                                    warnings.add(
+                                        self._warning(
+                                            "SNOWFLAKE_LINEAGE_BOUNDARY_SKIPPED",
+                                            (
+                                                "Lineage past a "
+                                                f"{boundary.object_domain} "
+                                                "object is not traversable."
+                                            ),
+                                            boundary.qualified_name,
+                                        )
+                                    )
+                                    continue
+                                candidate = _TraversalRoot(
+                                    reference=boundary,
+                                    level_offset=actual_distance,
+                                )
+                                existing = next_frontier.get(boundary.object_id)
+                                if (
+                                    existing is None
+                                    or candidate.level_offset < existing.level_offset
+                                ):
+                                    next_frontier[boundary.object_id] = candidate
+
+                    futures.clear()
             frontier = list(next_frontier.values())
 
         if cycle_reported:
-            warnings.append(
+            warnings.add(
                 self._warning(
                     "SNOWFLAKE_LINEAGE_CYCLE_SKIPPED",
                     (
@@ -223,7 +306,7 @@ class SnowflakeDeepLineageService:
                 )
             )
         if truncated:
-            warnings.append(
+            warnings.add(
                 self._warning(
                     "SNOWFLAKE_LINEAGE_TRUNCATED",
                     (
@@ -242,12 +325,7 @@ class SnowflakeDeepLineageService:
                 item.target.qualified_name,
             ),
         )
-        snapshot_warnings = list(
-            {
-                (warning.code, warning.message, warning.root_object_name): warning
-                for warning in warnings
-            }.values()
-        )
+        snapshot_warnings = warnings.ordered()
         snapshot = SnowflakeLineageSnapshot(
             account_identifier=account_identifier,
             objects=ordered_nodes,
@@ -283,11 +361,30 @@ class SnowflakeDeepLineageService:
         rows = self.query_client.get_lineage(
             connection,
             object_name=item.reference.qualified_name,
-            object_domain=item.reference.object_domain,
+            object_domain=self._query_domain(item.reference),
             direction=request.direction,
             max_distance=batch_depth,
         )
         return batch_depth, rows
+
+    @staticmethod
+    def _is_traversable(reference: SnowflakeObjectReference) -> bool:
+        # Anything carrying a column is queried as a COLUMN regardless of what
+        # holds it, so the container's domain only gates object-level hops.
+        if reference.column_name:
+            return True
+        return reference.object_domain.upper() in _TRAVERSABLE_DOMAINS
+
+    @staticmethod
+    def _query_domain(reference: SnowflakeObjectReference) -> str:
+        # `object_domain` on a row is the *container's* domain, but
+        # `qualified_name` already carries the column. Passing the container
+        # domain with a four-part name makes Snowflake read the whole string
+        # as a table name and fail with "Table 'DB.SCHEMA.T.COL' does not
+        # exist" -- which is what stopped every column trace at level five.
+        if reference.column_name:
+            return "COLUMN"
+        return reference.object_domain
 
     @staticmethod
     def _root_reference(
@@ -412,10 +509,16 @@ class SnowflakeDeepLineageService:
             database,
             schema_name,
             object_name,
-            object_domain,
         ]
         if column_name:
-            id_parts.append(column_name)
+            # A column is identified by its container and its name. Folding the
+            # container's domain into the ID split the synthesised root (which
+            # only knows the requested domain, COLUMN) from the same column as
+            # Snowflake reports it (TABLE/VIEW), leaving the root in the
+            # response as a second, edgeless node.
+            id_parts.extend(("COLUMN", column_name))
+        else:
+            id_parts.append(object_domain)
         return SnowflakeObjectReference(
             object_id=stable_lineage_id("snowflake", *id_parts),
             database=database,
@@ -433,7 +536,13 @@ class SnowflakeDeepLineageService:
         node: SnowflakeObjectReference,
         max_nodes: int,
     ) -> bool:
-        if node.object_id in nodes:
+        existing = nodes.get(node.object_id)
+        if existing is not None:
+            # The root is built from the request, so its domain is the
+            # requested "COLUMN" rather than whatever actually holds the
+            # column. Take Snowflake's answer once it arrives.
+            if existing.object_domain == "COLUMN" and node.object_domain != "COLUMN":
+                nodes[node.object_id] = node
             return True
         if len(nodes) >= max_nodes:
             return False
@@ -463,6 +572,19 @@ class SnowflakeDeepLineageService:
             process=row.process,
         )
         return True
+
+    @staticmethod
+    def _reason(error: BaseException) -> str:
+        # Without this the warning said only "a branch could not be read",
+        # which is the same text whether the object was dropped, the role
+        # lacks access, or the session died -- so nobody could act on it.
+        detail = getattr(error, "message", None) or str(error)
+        detail = " ".join(detail.split())
+        if not detail:
+            return type(error).__name__
+        return detail[:_MAX_WARNING_DETAIL] + (
+            "..." if len(detail) > _MAX_WARNING_DETAIL else ""
+        )
 
     @staticmethod
     def _warning(

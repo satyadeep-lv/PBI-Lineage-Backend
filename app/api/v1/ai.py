@@ -25,6 +25,29 @@ async def get_ai_status() -> AIStatusResponse:
 
 
 @router.post(
+    "/explain",
+    response_model=AIChatResponse,
+)
+async def post_ai_explain(
+    request: AIChatRequest,
+    powerbi_access_token: str = Depends(get_powerbi_access_token),
+    fabric_access_token: str | None = Depends(get_optional_fabric_access_token),
+) -> AIChatResponse:
+    """Evidence-only answer: no model call, works with AI disabled.
+
+    Same request and response shape as `/chat`, but the answer is rendered
+    straight from the gathered lineage evidence, so it cannot be blocked by
+    provider configuration or reachability.
+    """
+    service = AIService(
+        settings=get_settings(),
+        powerbi_access_token=powerbi_access_token,
+        fabric_access_token=fabric_access_token,
+    )
+    return await service.explain(request)
+
+
+@router.post(
     "/chat",
     response_model=AIChatResponse,
 )

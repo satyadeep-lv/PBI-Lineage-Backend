@@ -159,6 +159,17 @@ def _metadata_payload() -> dict:
                 "securityFilteringBehavior": "OneDirection",
             }
         ],
+        "calc_dependencies": [
+            {
+                "object_type": "MEASURE",
+                "table": "Sales",
+                "object": "Total Sales",
+                "expression": "SUM(Sales[Amount])",
+                "referenced_object_type": "COLUMN",
+                "referenced_table": "Sales",
+                "referenced_object": "Amount",
+            }
+        ],
         "warnings": [
             {
                 "code": "XMLA_PARTIAL_METADATA",
@@ -208,6 +219,9 @@ async def test_get_xmla_metadata_maps_client_payload():
     assert table.partitions[0].source_type == "M"
     assert table.hierarchies[0].levels[0].ordinal == 0
     assert result.relationships[0].cross_filter_direction == "Single"
+    assert result.calc_dependencies[0].object == "Total Sales"
+    assert result.calc_dependencies[0].referenced_object == "Amount"
+    assert result.calc_dependencies[0].referenced_object_type == "COLUMN"
     assert result.warnings[0].code == "XMLA_PARTIAL_METADATA"
     assert fake_client.calls == [
         {

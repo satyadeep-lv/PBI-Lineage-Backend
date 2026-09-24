@@ -15,6 +15,7 @@ from app.api.dependencies.lineage import (
 )
 from app.api.dependencies.security import require_lineage_api_key
 from app.core.exceptions import InvalidLineageRequestError, ResourceNotFoundError
+from app.domain.semantic_model_filters import exclude_auto_date_tables
 from app.schemas.dax_dependency import DaxDependencyAnalysisResponse
 from app.schemas.estate import EstateDiscoveryResponse
 from app.schemas.impact_analysis import ImpactAnalysisResponse
@@ -78,7 +79,16 @@ router = APIRouter(dependencies=[Depends(require_lineage_api_key)])
 )
 async def analyze_dax(
     semantic_model: ParsedSemanticModelResponse,
+    include_auto_date_tables: Annotated[
+        bool,
+        Query(
+            alias="includeAutoDateTables",
+        ),
+    ] = False,
 ) -> DaxDependencyAnalysisResponse:
+    if not include_auto_date_tables:
+        semantic_model = exclude_auto_date_tables(semantic_model)
+
     return await asyncio.to_thread(DaxDependencyService().analyze, semantic_model)
 
 

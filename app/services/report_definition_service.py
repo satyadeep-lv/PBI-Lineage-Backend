@@ -23,6 +23,7 @@ from app.schemas.report_definition import (
     ReportDefinitionPart,
     ReportDefinitionResponse,
 )
+from app.services.provider_read_cache import get_provider_read_cache
 from app.services.report_definition_normalizer import (
     ReportDefinitionNormalizer,
 )
@@ -242,6 +243,34 @@ class ReportDefinitionService:
         report_id: str,
         access_token: str,
         definition_format: str | None = "PBIR",
+    ) -> ReportDefinitionResponse:
+        cache = get_provider_read_cache()
+        key = (
+            cache.fingerprint(access_token),
+            "fabric",
+            "report-definition",
+            workspace_id,
+            report_id,
+            definition_format or "",
+        )
+
+        return await cache.get_or_fetch(
+            key,
+            lambda: self._fetch_definition(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                access_token=access_token,
+                definition_format=definition_format,
+            ),
+        )
+
+    async def _fetch_definition(
+        self,
+        *,
+        workspace_id: str,
+        report_id: str,
+        access_token: str,
+        definition_format: str | None,
     ) -> ReportDefinitionResponse:
         response = await self.client.start_report_definition(
             workspace_id=workspace_id,
