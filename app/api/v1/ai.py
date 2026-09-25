@@ -33,11 +33,14 @@ async def post_ai_explain(
     powerbi_access_token: str = Depends(get_powerbi_access_token),
     fabric_access_token: str | None = Depends(get_optional_fabric_access_token),
 ) -> AIChatResponse:
-    """Evidence-only answer: no model call, works with AI disabled.
+    """Evidence-first answer that works with AI disabled.
 
-    Same request and response shape as `/chat`, but the answer is rendered
-    straight from the gathered lineage evidence, so it cannot be blocked by
-    provider configuration or reachability.
+    Same request and response shape as `/chat`. The facts are gathered
+    deterministically; when AI is enabled and configured a model writes them
+    up (one call, no tools, claims checked against the evidence), and
+    otherwise -- or if that fails -- the answer is rendered straight from the
+    evidence, so it cannot be blocked by provider configuration or
+    reachability. `usage` says whether a model was involved.
     """
     service = AIService(
         settings=get_settings(),

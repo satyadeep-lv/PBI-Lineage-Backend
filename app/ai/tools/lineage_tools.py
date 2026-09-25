@@ -41,23 +41,28 @@ def build_context_graph(context: ResolvedAIContext) -> LineageGraph | None:
     effort: matching failures degrade to a semantic-model-only graph rather
     than failing the whole request.
     """
-    if context.parsed_semantic_model is None:
+    model = context.parsed_semantic_model
+    if model is None:
         return None
 
     report_lineage = None
-    if context.report_definition is not None and context.workspace_id:
+    if context.report_definition is not None:
         try:
             report_lineage = ReportSemanticLineageService().match(
                 report=context.report_definition,
-                semantic_model=context.parsed_semantic_model,
-                semantic_model_workspace_id=context.workspace_id,
+                semantic_model=model,
+                # The model's own workspace, not the report's: the graph
+                # rejects report lineage that names a different model home,
+                # which is exactly the case for a report on a shared model.
+                semantic_model_workspace_id=model.workspace_id,
             )
         except Exception:  # noqa: BLE001 - heuristic matcher, degrade not crash
             report_lineage = None
 
     return build_lineage_graph(
-        context.parsed_semantic_model,
+        model,
         report_lineage=report_lineage,
+        physical_sources=context.physical_sources,
     )
 
 
@@ -204,7 +209,9 @@ def get_physical_sources(context: ResolvedAIContext) -> list[EvidenceItem]:
     if model is None:
         return []
 
-    discovery = PhysicalSourceDiscoveryService().discover(model)
+    discovery = context.physical_sources or PhysicalSourceDiscoveryService().discover(
+        model
+    )
     now = datetime.now(UTC)
 
     return [

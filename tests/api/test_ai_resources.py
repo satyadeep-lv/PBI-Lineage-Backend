@@ -231,10 +231,14 @@ def test_ai_chat_answers_measure_question_end_to_end(client, monkeypatch):
         _clear_overrides()
 
 
-def test_ai_chat_stream_event_sequence_has_no_duplicate_final_answer(
+def test_ai_chat_stream_matches_the_frontend_event_contract(
     client,
     monkeypatch,
 ):
+    """The frontend reads `delta.text`, and treats `complete` as the full,
+    authoritative response whose `answer` replaces the streamed text.
+    `complete` used to omit `answer`, so every streamed reply rendered as an
+    empty bubble."""
     _override_powerbi_token()
     _override_fabric_token()
 
@@ -261,7 +265,43 @@ def test_ai_chat_stream_event_sequence_has_no_duplicate_final_answer(
         assert "delta" in event_names
 
         complete_payload = events[-1][1]
-        assert "answer" not in complete_payload
         assert complete_payload["status"] == "out_of_scope"
+        assert complete_payload["answer"]
+        assert "evidence" in complete_payload
+        assert complete_payload["conversation_id"] == events[0][1]["conversation_id"]
+
+        # Deltas carry the text under the key the frontend reads, and join
+        # back to exactly the final answer -- spaces and newlines intact.
+        deltas = [data for name, data in events if name == "delta"]
+        assert all(data["text"] == data["delta"] for data in deltas)
+        assert "".join(data["text"] for data in deltas) == complete_payload["answer"]
+    finally:
+        _clear_overrides()
+
+
+def test_ai_chat_stream_error_carries_the_reason_the_frontend_reads(
+    client,
+    monkeypatch,
+):
+    _override_powerbi_token()
+
+    try:
+        monkeypatch.setattr(
+            "app.api.v1.ai.get_settings",
+            lambda: Settings(ai_enabled=False),
+        )
+
+        response = client.post(
+            "/api/v1/ai/chat/stream",
+            json={"message": "Explain Gross Margin"},
+        )
+
+        events = _parse_sse_events(response.text)
+
+        assert [name for name, _ in events] == ["error"]
+        payload = events[0][1]
+        assert payload["code"] == "AI_DISABLED"
+        assert payload["reason"] == "disabled"
+        assert payload["error"] == payload["message"]
     finally:
         _clear_overrides()

@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+
 from app.domain.dax_lineage import (
     expression_index,
     physical_sources_by_table,
@@ -152,54 +154,70 @@ class SemanticColumnLineageService:
             (column.source_column or column.name) if column else dependency.object_name
         )
 
-        physical_sources = sources_by_table.get(dependency.table_name.casefold(), [])
-        references: list[PhysicalColumnReference] = []
+        return physical_column_references(
+            source_column_name=source_column_name,
+            sources=sources_by_table.get(dependency.table_name.casefold(), []),
+        )
 
-        for source in physical_sources:
-            if source.kind != "database" or not source.object_name:
-                continue
 
-            column_names = [source_column_name]
-            resolution_method: PhysicalColumnResolutionMethod = "same_name_assumed"
+def physical_column_references(
+    *,
+    source_column_name: str,
+    sources: Iterable[PhysicalDataSource],
+) -> list[PhysicalColumnReference]:
+    """Map a semantic column's ``sourceColumn`` onto each database source it
+    reads from.
 
-            if source.native_query:
-                for projected in parse_select_columns(source.native_query):
-                    if (
-                        projected.output_name.casefold()
-                        != source_column_name.casefold()
-                    ):
-                        continue
-                    if projected.source_identifiers:
-                        column_names = projected.source_identifiers
-                        resolution_method = "native_query_select"
-                    break
+    When the source is a native query, the ``SELECT`` list is consulted so an
+    alias resolves to the physical column(s) behind it; otherwise the physical
+    column is assumed to carry the ``sourceColumn`` name, which is how a plain
+    table import behaves. Non-database sources (files, web) have no columns to
+    report and are skipped.
+    """
+    references: list[PhysicalColumnReference] = []
 
-            for column_name in column_names:
-                qualified_parts = [
-                    part
-                    for part in (
-                        source.database,
-                        source.schema_name,
-                        source.object_name,
-                        column_name,
-                    )
-                    if part
-                ]
-                references.append(
-                    PhysicalColumnReference(
-                        source_id=source.source_id,
-                        provider=source.provider,
-                        server=source.server,
-                        database=source.database,
-                        schema_name=source.schema_name,
-                        object_name=source.object_name,
-                        column_name=column_name,
-                        resolution_method=resolution_method,
-                        fully_qualified_name=".".join(qualified_parts),
-                    )
+    for source in sources:
+        if source.kind != "database" or not source.object_name:
+            continue
+
+        column_names = [source_column_name]
+        resolution_method: PhysicalColumnResolutionMethod = "same_name_assumed"
+
+        if source.native_query:
+            for projected in parse_select_columns(source.native_query):
+                if projected.output_name.casefold() != source_column_name.casefold():
+                    continue
+                if projected.source_identifiers:
+                    column_names = projected.source_identifiers
+                    resolution_method = "native_query_select"
+                break
+
+        for column_name in column_names:
+            qualified_parts = [
+                part
+                for part in (
+                    source.database,
+                    source.schema_name,
+                    source.object_name,
+                    column_name,
                 )
+                if part
+            ]
+            references.append(
+                PhysicalColumnReference(
+                    source_id=source.source_id,
+                    provider=source.provider,
+                    server=source.server,
+                    database=source.database,
+                    schema_name=source.schema_name,
+                    object_name=source.object_name,
+                    column_name=column_name,
+                    resolution_method=resolution_method,
+                    fully_qualified_name=".".join(qualified_parts),
+                )
+            )
 
-        return references
+    return references
 
 
 def _row(

@@ -48,6 +48,23 @@ def test_orientation_questions_route_to_the_model_agent(question):
     assert classify_intent(question, None) == AIIntent.SEMANTIC_MODEL_INFORMATION
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Explain this report check_remane_app",
+        "Which semantic model powers it?",
+        "Where does the data come from?",
+        "Which measures are used?",
+    ],
+)
+def test_the_report_suggestions_are_answered_by_the_report_agent(question):
+    # "Which measures are used?" with a report open means used by that
+    # report; the model inventory would list every measure in the model.
+    intent = classify_intent(question, AIChatContext(object_type="report"))
+
+    assert intent == AIIntent.REPORT_INFORMATION
+
+
 def test_an_inventory_question_wins_over_a_selected_measure():
     # "what measures are there" is an inventory question even while a
     # measure happens to be selected in the UI.

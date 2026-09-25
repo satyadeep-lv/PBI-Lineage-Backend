@@ -322,3 +322,54 @@ class ExplorerSnapshotResponse(ExplorerResponseBase):
     measure_source_lineage: MeasureSourceLineageDataset
     report_layout: ReportLayoutDataset
     visual_source_lookup: VisualSourceLookupDataset
+
+
+class ReportVisualSourceColumnsRequest(BaseModel):
+    """One report; its semantic model is inferred from the report binding."""
+
+    workspace_id: UUID
+    report_id: UUID
+    include_gateway_sources: bool = False
+
+
+class ReportVisualSourceColumnRow(BaseModel):
+    page_name: str
+    page_id: str | None = None
+    visual_id: str | None = None
+    visual_title: str | None = None
+    visual_type: str | None = None
+    field_role: str | None = None
+    semantic_table: str | None = None
+    semantic_object_name: str | None = None
+    semantic_object_type: Literal["column", "measure", "calculated_column"] | None = (
+        None
+    )
+    dax_expression: str | None = None
+    # Distinct, sorted physical column names; the frontend joins them.
+    source_columns: list[str] = Field(default_factory=list)
+    # Distinct, sorted `database.schema.table` names.
+    source_tables: list[str] = Field(default_factory=list)
+    # Set when the sources were reached through a composite model's link into
+    # another workspace.
+    via_workspace_name: str | None = None
+    resolution_status: Literal["resolved", "partial", "unresolved"]
+    # Why a row is partial or unresolved. Evidence only, never a guess.
+    resolution_note: str | None = None
+
+
+class ReportVisualSourceColumnsResponse(BaseModel):
+    workspace_id: str
+    workspace_name: str
+    report_id: str
+    report_name: str
+    semantic_model_id: str | None = None
+    semantic_model_name: str | None = None
+    semantic_model_workspace_id: str | None = None
+    rows: list[ReportVisualSourceColumnRow] = Field(default_factory=list)
+    total_field_reference_count: int = Field(default=0, ge=0)
+    resolved_count: int = Field(default=0, ge=0)
+    # Not requested by name, but without it the three counts would not add up
+    # to the total.
+    partial_count: int = Field(default=0, ge=0)
+    unresolved_count: int = Field(default=0, ge=0)
+    warnings: list[ExplorerWarning] = Field(default_factory=list)

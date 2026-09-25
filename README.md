@@ -596,6 +596,7 @@ POST /api/v1/explorer/semantic-model-objects
 POST /api/v1/explorer/measure-source-lineage
 POST /api/v1/explorer/report-layout
 POST /api/v1/explorer/visual-source-lookup
+POST /api/v1/explorer/report-visual-source-columns
 ```
 
 These routes are the typed replacement for the five legacy Streamlit tables,
@@ -837,6 +838,37 @@ Legacy screen mapping:
 | Measure Source Lineage | `/explorer/measure-source-lineage` | Measure/calculated-object DAX, terminal semantic sources, dependency depth, physical source, and fully qualified name |
 | Report Layout | `/explorer/report-layout` | Pages, visuals, roles, fields, query references, definition counts, and visual coordinates |
 | Visual Source Lookup | `/explorer/visual-source-lookup` | Visual fields joined to semantic objects with status, confidence, reason, source path, coordinates, and (opt-in) cross-model dataset/role |
+| — (new) | `/explorer/report-visual-source-columns` | One row per visual field with the physical database columns and `db.schema.table` names it reads, `via_workspace_name`, and a `resolved`/`partial`/`unresolved` status with a note |
+
+#### Report visual source columns
+
+```text
+POST /api/v1/explorer/report-visual-source-columns
+{"workspace_id": "<report workspace>", "report_id": "<report>", "include_gateway_sources": false}
+```
+
+Feeds the "Report visuals" grid. Unlike the other explorer routes it takes a
+single report and no `semantic_model_id`: the bound model is inferred with the
+same chain (`report.datasetWorkspaceId`, else the report's own workspace), and
+when Power BI omits `datasetWorkspaceId` and the model is not listed there, the
+caller's other workspaces are searched for it. Composite-model links are
+always followed. It needs the Power BI session and honours
+`X-Lineage-Admin-Key`; Fabric access is optional but without it no definitions
+can be read, so the response carries only a `FABRIC_SESSION_REQUIRED` warning.
+
+- A column maps to its TMDL `sourceColumn` (native-SQL aliases are resolved
+  through the `SELECT` list) on its table's physical source. A composite
+  table's column is looked up again in the upstream model, because its
+  `sourceColumn` names the upstream column, not the database's.
+- Measures and calculated columns are walked with `terminal_dependencies`, as
+  in `/measure-source-lineage`, so chains reach their terminal columns.
+- Nothing is invented. Unmatched fields, visual calculations and field
+  parameters are `unresolved` with a note; a dependency cycle is `partial`
+  with `DAX_DEPENDENCY_CYCLE`; a composite link that cannot be followed keeps
+  empty arrays plus a `CROSS_WORKSPACE_*` warning. An implicit aggregation
+  (`Sum of Amount`) is traced through its column and noted as such.
+- A report or model definition that cannot be read degrades to warnings and
+  unresolved rows; only the workspace and report are hard requirements.
 
 ### Session Cache
 
@@ -848,7 +880,9 @@ DELETE /api/v1/cache
 Power BI and Fabric reads are cached per signed-in session (see "Cost of an
 explorer call"). `GET` reports `{enabled, ttl_seconds, max_entries,
 entry_count}`; `DELETE` drops **only the calling session's** entries and is
-what a "Refresh" control should call. Both require the same authenticated
+what a "Refresh" control should call. It clears entries under both the
+session's Power BI and Fabric tokens -- report and semantic model definitions
+are cached under the Fabric one. Both require the same authenticated
 Power BI session as every other route.
 
 ### Unified Lineage

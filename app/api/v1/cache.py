@@ -2,7 +2,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies.credentials import get_powerbi_access_token
+from app.api.dependencies.credentials import (
+    get_optional_fabric_access_token,
+    get_powerbi_access_token,
+)
 from app.schemas.cache import CacheStatusResponse
 from app.services.provider_read_cache import get_provider_read_cache
 
@@ -38,6 +41,10 @@ async def clear_cache(
         str,
         Depends(get_powerbi_access_token),
     ],
+    fabric_access_token: Annotated[
+        str | None,
+        Depends(get_optional_fabric_access_token),
+    ],
 ) -> CacheStatusResponse:
     """Drop this session's cached provider reads.
 
@@ -46,6 +53,11 @@ async def clear_cache(
     """
     cache = get_provider_read_cache()
     cache.invalidate_session(access_token)
+    # Report and semantic model definitions are fetched -- and so cached --
+    # under the session's Fabric token, not its Power BI one. Without this a
+    # refresh would leave every TMDL/PBIR definition stale.
+    if fabric_access_token is not None:
+        cache.invalidate_session(fabric_access_token)
 
     return CacheStatusResponse(
         enabled=cache.enabled,

@@ -34,6 +34,9 @@ class AIChatContext(BaseModel):
     workspace_id: str | None = None
     report_id: str | None = None
     semantic_model_id: str | None = None
+    # A report's model can live in another workspace. Optional: the resolver
+    # finds it itself when this is absent.
+    semantic_model_workspace_id: str | None = None
     page_id: str | None = None
     object_type: str | None = None
     object_id: str | None = None

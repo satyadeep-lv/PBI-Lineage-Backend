@@ -92,3 +92,36 @@ def test_non_data_visual_returns_empty_list():
     result = extract_visual_field_references(visual_definition)
 
     assert result == []
+
+
+def test_visual_calculation_is_surfaced_instead_of_dropped():
+    visual_definition = {
+        "visual": {
+            "query": {
+                "queryState": {
+                    "Values": {
+                        "projections": [
+                            {
+                                "field": {
+                                    "NativeVisualCalculation": {
+                                        "Language": "dax",
+                                        "Expression": "RUNNINGSUM([Sales])",
+                                        "Name": "Running total",
+                                    }
+                                },
+                                "queryRef": "select",
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+
+    references = extract_visual_field_references(visual_definition)
+
+    assert len(references) == 1
+    assert references[0].object_type == "visual_calculation"
+    assert references[0].object_name == "Running total"
+    assert references[0].table_name is None
+    assert references[0].role == "Values"

@@ -2,6 +2,7 @@ import logging
 import time
 import uuid
 
+from app.ai.agents.base import assign_evidence_ids
 from app.ai.composition.deterministic_renderer import DeterministicAnswerRenderer
 from app.ai.composition.grounded_composer import ComposerFailure, compose
 from app.ai.composition.grounding_validator import (
@@ -25,6 +26,7 @@ from app.ai.orchestration.supervisor import Supervisor
 from app.ai.orchestration.tool_loop import ToolLoopUnavailableError, run_tool_loop
 from app.ai.providers.base import ModelGateway
 from app.ai.providers.factory import build_model_gateway, is_provider_configured
+from app.ai.services.conversation_store import conversation_history, remember_turn
 from app.core.config import Settings
 from app.core.exceptions import AIDisabledError
 from app.core.metrics import metrics_registry
@@ -40,9 +42,11 @@ _STATUS_METRIC_BY_ANSWER_STATUS: dict[AIAnswerStatus, str] = {
 class AIService:
     """Orchestrates one request end to end.
 
-    resolver -> supervisor/agent -> evidence gate -> composer -> validator
-    -> deterministic fallback. The model is only ever invoked once, and
-    only when `EvidenceBundle.can_answer` is True.
+    resolver -> tool loop (model picks read-only tools) -> or, failing that,
+    supervisor/agent -> evidence gate -> composer -> validator ->
+    deterministic fallback. The composer is only ever invoked when
+    `EvidenceBundle.can_answer` is True, and a tool-loop answer is only kept
+    when tools actually returned evidence.
     """
 
     def __init__(
@@ -99,6 +103,11 @@ class AIService:
                 question=request.message,
                 context=resolved_context,
                 temperature=self._settings.ai_temperature,
+                audience=request.audience,
+                history=conversation_history(
+                    self._powerbi_access_token,
+                    request.conversation_id,
+                ),
             )
         except ToolLoopUnavailableError:
             return None
@@ -140,7 +149,9 @@ class AIService:
             status=AIAnswerStatus.ANSWERED,
             answer=result.answer,
             claims=[],
-            evidence=result.evidence,
+            # Numbered like every other path, so each item has a stable,
+            # unique id the frontend can key and cite.
+            evidence=assign_evidence_ids(result.evidence),
             agent="tool_loop",
             suggested_questions=suggested_questions_for(request.context),
             usage=usage,
@@ -161,17 +172,34 @@ class AIService:
         self,
         request: AIChatRequest,
     ) -> AIChatResponse:
-        """Answer from evidence alone, without ever calling the model.
+        """Answer from gathered evidence; a model only ever writes it up.
 
-        Everything Power AI states about a measure -- its DAX, what it
-        depends on, the physical tables behind it and what breaks if it
-        changes -- is gathered deterministically before any model is
-        involved. Exposing that directly means the factual answer does not
-        depend on `AI_ENABLED`, on a provider being configured, or on the
-        host being able to reach one.
+        Everything Power AI states about a measure -- its DAX, the semantic
+        model it lives in, what it depends on, the database tables behind it,
+        what is built on it and which visuals it reaches -- is gathered
+        deterministically before any model is involved. When AI is enabled
+        and configured, the model turns that evidence into a readable answer
+        (one call, no tools, claims validated against the evidence);
+        otherwise, or if that fails, the deterministic rendering is the
+        answer. Either way the facts do not depend on `AI_ENABLED`, on a
+        provider being configured, or on the host being able to reach one.
         """
         conversation_id = request.conversation_id or str(uuid.uuid4())
         bundle = await self.build_evidence_bundle(request)
+
+        claims: list[GroundedClaim] = []
+        usage: AIUsage | None = None
+        if (
+            bundle.can_answer
+            and self._settings.ai_enabled
+            and is_provider_configured(self._settings)
+        ):
+            answer, claims, usage, _ = await self._compose_grounded_answer(
+                bundle,
+                audience=request.audience,
+            )
+        else:
+            answer = DeterministicAnswerRenderer.render(bundle, request.audience)
 
         logger.info(
             "ai_explain_completed",
@@ -187,15 +215,29 @@ class AIService:
         return AIChatResponse(
             conversation_id=conversation_id,
             status=bundle.status,
-            answer=DeterministicAnswerRenderer.render(bundle, request.audience),
-            claims=[],
+            answer=answer,
+            claims=claims,
             evidence=bundle.evidence,
             agent=bundle.agent,
             suggested_questions=suggested_questions_for(request.context),
-            usage=None,
+            usage=usage,
         )
 
     async def generate(
+        self,
+        request: AIChatRequest,
+    ) -> AIChatResponse:
+        response = await self._generate(request)
+        # Kept whatever path answered, so a follow-up can refer back to it.
+        remember_turn(
+            self._powerbi_access_token,
+            response.conversation_id,
+            request.message,
+            response.answer,
+        )
+        return response
+
+    async def _generate(
         self,
         request: AIChatRequest,
     ) -> AIChatResponse:

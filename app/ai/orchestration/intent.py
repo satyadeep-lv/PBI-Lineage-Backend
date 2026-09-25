@@ -74,6 +74,15 @@ def classify_intent(
     normalized = message.casefold()
     object_type = (context.object_type if context else None) or ""
 
+    # With a report open, "which measures are used" means used by *this
+    # report*, and "where does the data come from" means its sources -- the
+    # report agent's evidence answers both, where the model inventory would
+    # list every measure in the model instead.
+    if object_type == "report" and not any(
+        keyword in normalized for keyword in _IMPACT_KEYWORDS
+    ):
+        return AIIntent.REPORT_INFORMATION
+
     # Checked before the object-type hint: "what measures are there" is an
     # inventory question even while a measure happens to be selected.
     if any(keyword in normalized for keyword in _INVENTORY_KEYWORDS):
@@ -97,8 +106,8 @@ def classify_intent(
         # lineage/impact questions.
         return AIIntent.OBJECT_IMPACT
 
-    if object_type == "report":
-        return AIIntent.REPORT_INFORMATION
+    if object_type == "table":
+        return AIIntent.OBJECT_IMPACT
 
     # No object-type hint: describing the current view comes before generic
     # verbs like "explain", which say nothing about *what* to explain.
