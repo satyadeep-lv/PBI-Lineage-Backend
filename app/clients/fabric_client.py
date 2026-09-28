@@ -117,3 +117,164 @@ class FabricClient:
             url=(f"{self.BASE_URL}/operations/{operation_id}/result"),
             access_token=access_token,
         )
+
+    # -- Org apps ---------------------------------------------------------
+
+    async def get_workspace(
+        self,
+        *,
+        workspace_id: str,
+        access_token: str,
+    ) -> dict[str, Any]:
+        response = await provider_get(
+            provider="fabric",
+            url=f"{self.BASE_URL}/workspaces/{workspace_id}",
+            access_token=access_token,
+            not_found_resource="workspace",
+            cacheable=True,
+        )
+
+        return self._parse_object_response(response)
+
+    async def get_org_app(
+        self,
+        *,
+        workspace_id: str,
+        org_app_id: str,
+        access_token: str,
+    ) -> dict[str, Any]:
+        response = await provider_get(
+            provider="fabric",
+            url=f"{self.BASE_URL}/workspaces/{workspace_id}/orgApps/{org_app_id}",
+            access_token=access_token,
+            not_found_resource="org app",
+            cacheable=True,
+        )
+
+        return self._parse_object_response(response)
+
+    async def list_org_app_audiences(
+        self,
+        *,
+        workspace_id: str,
+        access_token: str,
+        continuation_token: str | None = None,
+    ) -> dict[str, Any]:
+        response = await provider_get(
+            provider="fabric",
+            url=f"{self.BASE_URL}/workspaces/{workspace_id}/orgAppAudiences",
+            access_token=access_token,
+            params=(
+                {"continuationToken": continuation_token}
+                if continuation_token
+                else None
+            ),
+            not_found_resource="workspace",
+            cacheable=True,
+        )
+
+        return self._parse_object_response(response)
+
+    async def start_org_app_definition(
+        self,
+        *,
+        workspace_id: str,
+        org_app_id: str,
+        access_token: str,
+    ) -> httpx.Response:
+        return await provider_post(
+            provider="fabric",
+            url=(
+                f"{self.BASE_URL}/workspaces/{workspace_id}/orgApps/"
+                f"{org_app_id}/getDefinition"
+            ),
+            access_token=access_token,
+            not_found_resource="org app",
+        )
+
+    async def start_org_app_audience_definition(
+        self,
+        *,
+        workspace_id: str,
+        audience_id: str,
+        access_token: str,
+    ) -> httpx.Response:
+        return await provider_post(
+            provider="fabric",
+            url=(
+                f"{self.BASE_URL}/workspaces/{workspace_id}/orgAppAudiences/"
+                f"{audience_id}/getDefinition"
+            ),
+            access_token=access_token,
+            not_found_resource="org app audience",
+        )
+
+    async def list_workspace_role_assignments(
+        self,
+        *,
+        workspace_id: str,
+        access_token: str,
+        continuation_token: str | None = None,
+    ) -> dict[str, Any]:
+        response = await provider_get(
+            provider="fabric",
+            url=f"{self.BASE_URL}/workspaces/{workspace_id}/roleAssignments",
+            access_token=access_token,
+            params=(
+                {"continuationToken": continuation_token}
+                if continuation_token
+                else None
+            ),
+            not_found_resource="workspace",
+            cacheable=True,
+        )
+
+        return self._parse_object_response(response)
+
+    async def list_item_access_details_as_admin(
+        self,
+        *,
+        workspace_id: str,
+        item_id: str,
+        access_token: str,
+        item_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Principals with access to one item (Fabric admin, preview).
+
+        ``type`` is required by the API for Report, Dashboard, SemanticModel,
+        App and Dataflow items and optional for the rest.
+        """
+        response = await provider_get(
+            provider="fabric",
+            url=(
+                f"{self.BASE_URL}/admin/workspaces/{workspace_id}/items/{item_id}/users"
+            ),
+            access_token=access_token,
+            params={"type": item_type} if item_type else None,
+            not_found_resource="item",
+            cacheable=True,
+        )
+
+        return self._parse_object_response(response)
+
+    async def list_items(
+        self,
+        *,
+        workspace_id: str,
+        access_token: str,
+        continuation_token: str | None = None,
+    ) -> dict[str, Any]:
+        response = await provider_get(
+            provider="fabric",
+            url=f"{self.BASE_URL}/workspaces/{workspace_id}/items",
+            access_token=access_token,
+            params=(
+                {"continuationToken": continuation_token}
+                if continuation_token
+                else None
+            ),
+            not_found_resource="workspace",
+            cacheable=True,
+        )
+
+        return self._parse_object_response(response)
