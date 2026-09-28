@@ -41,7 +41,7 @@ This page lists maintained source and operational files. Generated
 | --- | --- |
 | `app/components/app-header.tsx` | Product identity (the frameless logo mark, swapping to `tab_logo-dark.png` in dark theme); Home and Workspace links plus a Documents dropdown (Setup guide, API reference); the mobile sheet with a "Documents" group; active state via `isApiReferencePath`; and the optional backend health query/badge. |
 | `app/components/app-footer.tsx` | Logo mark (light/dark copies) beside the product name, shared links, developer attribution, and current-year copyright on every page. |
-| `app/components/setup-guide/setup-guide.tsx` | Static Microsoft/Fabric/Scanner/XMLA/Snowflake/backend handbook, workflow handoff, troubleshooting, and references. |
+| `app/components/setup-guide/setup-guide.tsx` | Static identity and access guide: Entra app, service principal, workspace roles per feature, Scanner, Snowflake `LINEAGE_READER` script, troubleshooting, and references. No backend hosting. |
 
 ## Workspace Features
 

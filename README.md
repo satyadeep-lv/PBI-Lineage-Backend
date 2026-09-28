@@ -253,10 +253,11 @@ Developed by **Satyadeep Singh**.
 The application turns the backend API surface into guided operational views:
 
 - See how the application works from an animated walkthrough on Home.
-- Read a setup guide covering Microsoft Entra registration, Power BI and
-  Fabric tenant settings, Scanner metadata, database-provider access,
-  backend environment policy, verification, and official references, from the
-  header's Documents menu or Home.
+- Read a setup guide covering how to create the Microsoft Entra app and
+  service principal, the Fabric tenant settings and workspace roles each
+  feature needs, Scanner metadata, and a read-only Snowflake role with access
+  history and account usage access, plus verification and official
+  references, from the header's Documents menu or Home.
 - Authenticate Power BI and Fabric with a device code or service principal.
 - Create and inspect an optional source-system session through the currently
   implemented Snowflake connector.
@@ -529,7 +530,7 @@ takes effect after the dev server restarts.
 | Route | View | Data responsibility |
 | --- | --- | --- |
 | `/` | Home | High-level product purpose, animated walkthrough of the application, evidence path, investigation questions, and Start exploring / Setup guide actions. |
-| `/setup-guide` | Setup Guide | Static prerequisites for Microsoft, Fabric, Scanner, XMLA, the current Snowflake connector, backend hosting, and application verification. |
+| `/setup-guide` | Setup Guide | Static identity and access setup: Entra app for device code, service principal, workspace roles per feature, Admin Scanner, the Snowflake read role, and verification. |
 | `/workspace` | Power BI setup | Default workspace route. |
 | `/workspace/power-bi` | Power BI setup | Device-code and service-principal authentication. |
 | `/workspace/database` | Database setup | Snowflake connection, status, and logout. |
@@ -581,7 +582,7 @@ reference paths so the reference renders full-width.
 Home
   -> animated walkthrough of the application's tabs
   -> Setup Guide from the header Documents menu, the footer, or Home's button
-       -> roles, permissions, current connector, backend, and hosting checks
+       -> Entra app, service principal, workspace roles, Scanner, Snowflake read role
   -> Start
   -> Power BI setup
        -> device-code session OR service-principal session
@@ -1522,7 +1523,7 @@ PBI-Lineage-Frontend/
 | `app/components/app-header.tsx` | Renders product identity (the transparent logo mark with no frame, `tab_logo.png` in light theme and `tab_logo-dark.png` in dark), active Home/Workspace links and the Documents dropdown (Setup guide, API reference), the mobile navigation sheet with its "Documents" group, and an optional TanStack Query backend-health badge. Active state comes from `isApiReferencePath`. Home disables the health request and badge. |
 | `app/components/reveal.tsx` | `Reveal`: fades and lifts its content into place the first time it scrolls into view (optionally staggered, or growing from 94% for large media). It arms before the first paint, so nothing flickers, and shows content as-is under reduced motion or without IntersectionObserver. |
 | `app/components/app-footer.tsx` | Renders the logo mark (light/dark copies) beside the product name, shared navigation, mandatory developer attribution, and current-year copyright on all pages. |
-| `app/components/setup-guide/setup-guide.tsx` | Renders the static, role-oriented Microsoft/Fabric/Scanner/XMLA/Snowflake/backend setup handbook, ordered application handoff, troubleshooting matrix, and authoritative external references. It performs no provider API calls. |
+| `app/components/setup-guide/setup-guide.tsx` | Renders the static identity and access guide: the device-code app registration, the service principal, a per-feature workspace access table, Admin Scanner tenant settings, a copyable Snowflake `LINEAGE_READER` script (all-object read, `ACCESS_HISTORY`/ACCOUNT_USAGE, `VIEW LINEAGE`, service user, checks), a troubleshooting matrix, and authoritative external references. Backend hosting is out of scope. It performs no provider API calls. |
 
 ### Power AI Components
 

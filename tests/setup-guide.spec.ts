@@ -14,11 +14,17 @@ test("setup guide is available from navigation and leads into the application", 
 
   await expect(page).toHaveTitle("Setup Guide | PBI Lineage Explorer");
   await expect(page.getByRole("heading", { name: "Set up PBI Lineage Explorer" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Configure Power BI and Fabric" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Register an app for user sign-in" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Create a service principal" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Grant workspace and item access" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Enable the Power BI Admin Scanner" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Configure optional Snowflake access" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Configure the FastAPI backend and host" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Create the Snowflake read role" })).toBeVisible();
   await expect(page.getByText("Developed by Satyadeep Singh")).toBeVisible();
+
+  // The guide covers identities and access only; backend hosting lives in the backend repo.
+  await expect(page.getByRole("heading", { name: /FastAPI|backend and host/i })).toHaveCount(0);
+  await expect(page.getByText("GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE LINEAGE_READER;")).toBeVisible();
+  await expect(page.getByText("GRANT SELECT ON FUTURE TABLES IN DATABASE <database> TO ROLE LINEAGE_READER;")).toBeVisible();
 
   await expect(page.getByRole("link", { name: "Power BI REST API overview" })).toHaveAttribute(
     "href",

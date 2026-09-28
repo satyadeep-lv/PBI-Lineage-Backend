@@ -6,7 +6,7 @@
 Home
   -> animated walkthrough of the application's screens
   -> Setup Guide from the header Documents menu, the footer, or Home's button
-       -> Microsoft/Fabric/Scanner/current database connector/backend prerequisites
+       -> Entra app, service principal, workspace roles, Scanner, Snowflake read role
   -> Start
   -> Power BI setup
        -> device-code session OR service-principal session
@@ -42,15 +42,29 @@ Home
 
 `app/routes/setup-guide.tsx` and
 `app/components/setup-guide/setup-guide.tsx` render `/setup-guide`.
-The guide performs no provider requests. It documents responsible roles,
-device-code/service-principal/browser-SSO choices, the exact delegated scopes
-requested by this backend, Scanner tenant settings, optional XMLA, all four
-supported Snowflake authentication methods, backend `.env` policy, IIS/Vite
-connectivity, the ordered in-app workflow, verification, troubleshooting, and
-official Microsoft/Snowflake references. Wide tables and code examples scroll
-inside their containers rather than widening mobile pages. It is reached from
-the header's Documents menu, the footer, and Home's Setup guide button; the
-workspace sidebar does not link it.
+The guide performs no provider requests. Its scope is identities and access
+only: how to create what the application signs in with, not how to host the
+backend (that lives in the backend repository). It covers:
+
+- the device-code app registration (public client flows, the four portal
+  permissions behind the five delegated scopes the backend requests, and
+  admin consent — required because the Fabric token is acquired silently);
+- a separate service-principal app (no API permissions, client secret, security
+  group, the "Service principals can call Fabric public APIs" tenant setting);
+- a feature-by-feature workspace access table (Viewer for inventory and pages,
+  Contributor for PBIR/TMDL definitions because Fabric `getDefinition` needs
+  read and write on the item, gateway admin, XMLA Build);
+- the Admin Scanner tenant settings;
+- a copyable Snowflake script creating `LINEAGE_READER`: warehouse usage,
+  `USAGE`/`SELECT` on all and future schemas and objects in each database,
+  `IMPORTED PRIVILEGES` on `SNOWFLAKE` (ACCOUNT_USAGE incl. `ACCESS_HISTORY`),
+  `VIEW LINEAGE`, a narrower `OBJECT_VIEWER`/`GOVERNANCE_VIEWER` alternative,
+  a `TYPE = SERVICE` key-pair user, and verification queries;
+- verification, troubleshooting, and official Microsoft/Snowflake references.
+
+Wide tables and code examples scroll inside their containers rather than
+widening mobile pages. It is reached from the header's Documents menu, the
+footer, and Home's Setup guide button; the workspace sidebar does not link it.
 
 ## Home
 

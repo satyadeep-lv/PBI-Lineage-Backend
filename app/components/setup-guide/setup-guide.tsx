@@ -2,21 +2,21 @@ import {
   ArrowRight,
   BadgeCheck,
   BookOpenCheck,
+  Building2,
   CheckCircle2,
   CircleAlert,
+  Database,
   ExternalLink,
   FileKey2,
+  FolderLock,
   KeyRound,
   ListChecks,
   LockKeyhole,
   ScanSearch,
-  ServerCog,
   ShieldCheck,
   Snowflake,
-  SquareTerminal,
   UserCheck,
   Users,
-  Workflow,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -27,52 +27,89 @@ import { Button } from "~/components/ui/button";
 
 const guideSections = [
   { id: "before-you-begin", label: "Before you begin", number: "01" },
-  { id: "power-bi", label: "Power BI and Fabric", number: "02" },
-  { id: "scanner", label: "Admin Scanner", number: "03" },
-  { id: "snowflake", label: "Snowflake", number: "04" },
-  { id: "backend", label: "Backend and hosting", number: "05" },
-  { id: "use-application", label: "Use the application", number: "06" },
+  { id: "user-sign-in", label: "App for user sign-in", number: "02" },
+  { id: "service-principal", label: "Service principal", number: "03" },
+  { id: "workspace-access", label: "Workspace access", number: "04" },
+  { id: "scanner", label: "Admin Scanner", number: "05" },
+  { id: "snowflake", label: "Snowflake read role", number: "06" },
   { id: "verification", label: "Verify and troubleshoot", number: "07" },
   { id: "references", label: "Official references", number: "08" },
 ];
 
-const powerBiScopes = [
-  "Power BI Service: Workspace.Read.All",
-  "Power BI Service: Report.Read.All",
-  "Power BI Service: Dataset.Read.All",
-  "Microsoft Fabric: Workspace.Read.All",
-  "Microsoft Fabric: Item.ReadWrite.All",
+// What the backend requests on a device-code sign-in: three Power BI scopes,
+// then two Fabric scopes acquired silently from the same account.
+const delegatedScopes: [string, string][] = [
+  ["Power BI", "Workspace.Read.All"],
+  ["Power BI", "Report.Read.All"],
+  ["Power BI", "Dataset.Read.All"],
+  ["Fabric", "Workspace.Read.All"],
+  ["Fabric", "Item.ReadWrite.All"],
 ];
 
-const backendInstall = `cd C:\\Users\\Administrator\\Desktop\\PBI-Lineage-Backend
-py -3.13 -m venv .venv
-.venv\\Scripts\\python.exe -m pip install --upgrade pip
-.venv\\Scripts\\python.exe -m pip install --requirement requirements-dev.txt
-copy .env.example .env
-.venv\\Scripts\\python.exe -m pytest
-.venv\\Scripts\\python.exe -m fastapi dev app/main.py`;
+const snowflakeRoleScript = `-- Run in a Snowflake worksheet. Replace <warehouse> and <database>,
+-- and repeat block 2 for every database the application should read.
 
-const localEnvironment = `CORS_ALLOWED_ORIGINS=["http://localhost:5173"]
-ALLOWED_HOSTS=["localhost","127.0.0.1"]
-AUTH_COOKIE_SECURE=false
-AUTH_COOKIE_SAMESITE=lax
-ENABLE_API_DOCS=true
-SNOWFLAKE_ALLOW_EXTERNAL_BROWSER_AUTH=false`;
+-- 1. Role and warehouse
+USE ROLE SECURITYADMIN;
+CREATE ROLE IF NOT EXISTS LINEAGE_READER
+  COMMENT = 'Read-only role for PBI Lineage Explorer';
+GRANT ROLE LINEAGE_READER TO ROLE SYSADMIN;
+GRANT USAGE ON WAREHOUSE <warehouse> TO ROLE LINEAGE_READER;
 
-const productionEnvironment = `ENVIRONMENT=production
-CORS_ALLOWED_ORIGINS=[]
-ALLOWED_HOSTS=["<application-host>","127.0.0.1","localhost"]
-FORCE_HTTPS=false
-# IIS terminates/enforces HTTPS. Enable FORCE_HTTPS only with forwarded scheme.
-AUTH_COOKIE_SECURE=true
-AUTH_COOKIE_SAMESITE=lax
-ENABLE_API_DOCS=false
-SNOWFLAKE_ALLOW_EXTERNAL_BROWSER_AUTH=false
-LINEAGE_ADMIN_API_KEY=<secret-from-a-secure-store>`;
+-- 2. Read every object in the database, now and in the future
+GRANT USAGE ON DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT USAGE ON ALL SCHEMAS IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT USAGE ON FUTURE SCHEMAS IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON ALL TABLES IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON FUTURE TABLES IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON ALL VIEWS IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON FUTURE VIEWS IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON ALL MATERIALIZED VIEWS IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON FUTURE MATERIALIZED VIEWS IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON ALL DYNAMIC TABLES IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON ALL EXTERNAL TABLES IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON FUTURE EXTERNAL TABLES IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON ALL STREAMS IN DATABASE <database> TO ROLE LINEAGE_READER;
+GRANT SELECT ON FUTURE STREAMS IN DATABASE <database> TO ROLE LINEAGE_READER;
 
-const frontendCommands = `cd C:\\Users\\Administrator\\Desktop\\PBI-Lineage-Frontend
-npm.cmd ci
-npm.cmd run dev`;
+-- 3. Access history, account usage, and lineage
+USE ROLE ACCOUNTADMIN;
+GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE LINEAGE_READER;
+GRANT VIEW LINEAGE ON ACCOUNT TO ROLE LINEAGE_READER;`;
+
+const snowflakeDatabaseRoles = `USE ROLE ACCOUNTADMIN;
+-- OBJECT_DEPENDENCIES, TABLES, COLUMNS, VIEWS
+GRANT DATABASE ROLE SNOWFLAKE.OBJECT_VIEWER TO ROLE LINEAGE_READER;
+-- ACCESS_HISTORY, QUERY_HISTORY
+GRANT DATABASE ROLE SNOWFLAKE.GOVERNANCE_VIEWER TO ROLE LINEAGE_READER;`;
+
+const snowflakeKeyPair = `openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub`;
+
+const snowflakeUserScript = `USE ROLE USERADMIN;
+CREATE USER IF NOT EXISTS PBI_LINEAGE_SVC
+  TYPE = SERVICE
+  DEFAULT_ROLE = LINEAGE_READER
+  DEFAULT_WAREHOUSE = <warehouse>
+  RSA_PUBLIC_KEY = '<contents of rsa_key.pub without the BEGIN and END lines>'
+  COMMENT = 'PBI Lineage Explorer service user';
+
+USE ROLE SECURITYADMIN;
+GRANT ROLE LINEAGE_READER TO USER PBI_LINEAGE_SVC;`;
+
+const snowflakeCheckScript = `USE ROLE LINEAGE_READER;
+USE WAREHOUSE <warehouse>;
+SHOW GRANTS TO ROLE LINEAGE_READER;
+
+-- Account usage and access history are readable
+SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES;
+SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY
+WHERE query_start_time > DATEADD(day, -1, CURRENT_TIMESTAMP());
+
+-- Lineage resolves for a table the role can read
+SELECT *
+FROM TABLE(SNOWFLAKE.CORE.GET_LINEAGE('<database>.<schema>.<table>', 'TABLE', 'UPSTREAM', 2));`;
 
 export function SetupGuide() {
   return (
@@ -88,7 +125,7 @@ export function SetupGuide() {
               Set up PBI Lineage Explorer
             </h1>
             <p className="mt-4 max-w-3xl text-base leading-7 text-zinc-600 sm:text-lg">
-              Complete these prerequisites before opening the operational workspace. The guide covers Microsoft sign-in, Power BI and Fabric tenant access, Admin Scanner metadata, optional Snowflake lineage, and the FastAPI host configuration used by this application.
+              Create the identities the application signs in with: a Microsoft Entra app for people who use their own access, a service principal for unattended and tenant-wide access, and a read-only Snowflake role that can see every object in your databases and their access history.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Button nativeButton={false} render={<a href="#before-you-begin" />}>
@@ -102,9 +139,9 @@ export function SetupGuide() {
           </div>
 
           <div className="mt-9 grid border-y border-zinc-200 sm:grid-cols-3">
-            <ReadinessItem icon={Users} title="Microsoft administrator" text="Entra app registration and Fabric tenant settings" />
-            <ReadinessItem icon={ServerCog} title="Backend operator" text="FastAPI environment, HTTPS, proxy, and one worker" />
-            <ReadinessItem icon={Snowflake} title="Snowflake administrator" text="Optional account, authentication, role, and object access" />
+            <ReadinessItem icon={Users} title="Microsoft Entra administrator" text="App registrations, service principal, secret, and security group" />
+            <ReadinessItem icon={ShieldCheck} title="Fabric administrator" text="Tenant settings and workspace roles" />
+            <ReadinessItem icon={Snowflake} title="Snowflake administrator" text="Read-only role, service user, and account usage access" />
           </div>
         </div>
       </section>
@@ -145,138 +182,170 @@ export function SetupGuide() {
             number="01"
             icon={ListChecks}
             title="Before you begin"
-            description="Identify the people and access needed before entering any credentials. One person may hold several roles, but the responsibilities remain separate."
+            description="Decide how the application will sign in to Microsoft, then line up the administrators who own each step. One person may hold several of these roles."
           >
-            <div className="overflow-x-auto border border-zinc-200 bg-white">
-              <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-                <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
-                  <tr>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Owner</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">What they prepare</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Values or approval</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 text-zinc-700">
-                  <RoleRow owner="Entra administrator" responsibility="Create the application registration and approve delegated access when tenant policy requires it." evidence="Tenant ID and application client ID" />
-                  <RoleRow owner="Fabric administrator" responsibility="Allow the selected identity, enable Scanner metadata settings, and control the permitted security group." evidence="Tenant-setting approval" />
-                  <RoleRow owner="Workspace administrator" responsibility="Grant the user or service principal access to the workspaces and semantic models being inspected." evidence="Workspace role and model access" />
-                  <RoleRow owner="Snowflake administrator" responsibility="Create or approve a read-oriented identity and role for the target databases and lineage function." evidence="Account identifier, user, role, warehouse" />
-                  <RoleRow owner="Backend operator" responsibility="Install dependencies, configure environment policy, protect secrets, and expose the API through the application origin." evidence="Host, HTTPS, environment, health status" />
-                </tbody>
-              </table>
-            </div>
+            <Subheading title="Choose how the application signs in" />
+            <GuideTable
+              minWidth="min-w-[760px]"
+              headers={["Sign-in", "Use it for", "You will need", "Set up in"]}
+              rows={[
+                ["Device code", "A person exploring with their own Power BI and Fabric access", "Tenant ID and client ID", "Step 02"],
+                ["Service principal", "Unattended access, the same access for a whole team, and the Admin Scanner", "Tenant ID, client ID, and client secret value", "Step 03"],
+              ]}
+            />
+            <p className="text-sm leading-6 text-zinc-600">
+              You can set up both. They use separate app registrations, and both need the workspace access in Step 04.
+            </p>
+
+            <Subheading title="Who does what" />
+            <GuideTable
+              headers={["Owner", "What they prepare", "What they hand over"]}
+              rows={[
+                ["Entra administrator", "The user sign-in app, the service principal and its client secret, admin consent, and the security group.", "Tenant ID, both client IDs, and the secret value"],
+                ["Fabric administrator", "Developer and Admin API tenant settings for the service principal's security group.", "Tenant-setting approval"],
+                ["Workspace administrator", "A role for each person or the service principal in every workspace to be inspected.", "Workspace role per workspace"],
+                ["Snowflake administrator", "The read-only role, the service user, and access to account usage and access history.", "Account identifier, user, role, and warehouse"],
+              ]}
+            />
 
             <Checklist
               title="Preflight checklist"
               items={[
-                "The backend host can reach Microsoft identity, Power BI, Fabric, and Snowflake over outbound HTTPS.",
-                "You know whether people will sign in interactively or the application will run unattended.",
-                "The intended Microsoft identity can access at least one Power BI workspace and report.",
-                "You know whether Admin Scanner, XMLA, and Snowflake enrichment are required; all three add separate prerequisites.",
-                "Secrets will be entered only into the secured application or backend runtime, never into source control or frontend environment files.",
+                "You know whether people will sign in with their own access, the application will sign in as itself, or both.",
+                "A test workspace with at least one report and its semantic model is ready for the first sign-in.",
+                "A dedicated Microsoft Entra security group can be created for the service principal.",
+                "You know which Snowflake databases the lineage role must read.",
+                "A secret store is ready for the client secret and the Snowflake private key. Neither goes into source control, email, or chat.",
               ]}
             />
 
             <Callout tone="amber" icon={CircleAlert} title="Use least privilege">
-              Start with a test workspace and a dedicated security group. Scanner access can reveal tenant-wide metadata, so it should not be enabled broadly just to solve an ordinary workspace permission problem.
+              Start with a test workspace and a dedicated security group. Scanner access reveals tenant-wide metadata, so do not enable it broadly just to solve an ordinary workspace permission problem.
             </Callout>
           </GuideSection>
 
           <GuideSection
-            id="power-bi"
+            id="user-sign-in"
             number="02"
             icon={KeyRound}
-            title="Configure Power BI and Fabric"
-            description="The backend acquires separate Power BI and Fabric tokens. A successful Power BI token does not automatically prove Fabric item-definition access."
+            title="Register an app for user sign-in"
+            description="Device code sign-in acts with the signed-in person's own access. The application requests a Power BI token and then a Fabric token, so a working Power BI sign-in does not prove Fabric access."
           >
-            <Subheading title="Choose the sign-in mode" />
-            <div className="overflow-x-auto border border-zinc-200 bg-white">
-              <table className="w-full min-w-[840px] border-collapse text-left text-sm">
-                <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
-                  <tr>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Mode</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Use it for</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Required input</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Important setup</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 text-zinc-700">
-                  <AuthRow mode="Device code" use="A person exploring with their own Power BI access" input="Tenant ID and client ID" setup="Public-client flow plus delegated Power BI and Fabric permissions" />
-                  <AuthRow mode="Service principal" use="Unattended access and the Admin Scanner" input="Tenant ID, client ID, and client-secret value" setup="Dedicated security group, tenant settings, workspace access, and secret rotation" />
-                  <AuthRow mode="Browser SSO" use="A deployment-managed redirect sign-in experience" input="Tenant ID and client ID" setup="Public-client redirect URI matching the backend callback exactly" />
-                </tbody>
-              </table>
-            </div>
-            <p className="text-sm leading-6 text-zinc-600">
-              The current Power BI setup screen directly supports device code and service principal. Browser SSO is an optional backend deployment path; configure it only when the callback and frontend redirect origins are controlled by the operator.
-            </p>
-
-            <Subheading title="Create the Microsoft Entra application" />
             <NumberedSteps
               items={[
-                <><strong>Register the app.</strong> In Microsoft Entra admin center, open App registrations, create a single-tenant application, and record the Directory (tenant) ID and Application (client) ID.</>,
-                <><strong>Enable interactive authentication.</strong> For device code, enable public client flows. For browser SSO, also add the backend callback under Mobile and desktop applications; do not register it only as a confidential Web callback.</>,
-                <><strong>Add delegated permissions for interactive sign-in.</strong> For device code or browser SSO, add the five Power BI and Fabric permissions listed below, then obtain administrator consent when your tenant policy requires it. Do not treat this list as service-principal permissions.</>,
-                <><strong>Grant content access.</strong> Add the signing-in user to each required Power BI/Fabric workspace and grant access to the semantic models, reports, gateways, and capacities they need to inspect.</>,
-                <><strong>Test both providers.</strong> In the application, start Microsoft sign-in, complete the Microsoft prompt, and use Check status until both Power BI and Fabric report ready.</>,
+                <><strong>Register the app.</strong> In the Microsoft Entra admin center, open Applications › App registrations › New registration. Choose <em>Accounts in this organizational directory only</em>, leave the redirect URI empty, and register. Record the Directory (tenant) ID and Application (client) ID from Overview.</>,
+                <><strong>Allow public client flows.</strong> Under Authentication, set <em>Allow public client flows</em> to Yes and save. Device code is a public-client flow: without this setting Microsoft rejects the sign-in. This app never gets a client secret.</>,
+                <><strong>Add the delegated permissions.</strong> Under API permissions, choose Add a permission › Power BI Service › Delegated permissions, and select <code>Workspace.Read.All</code>, <code>Report.Read.All</code>, <code>Dataset.Read.All</code>, and <code>Item.ReadWrite.All</code>. The Fabric scopes are listed under the same Power BI Service API.</>,
+                <><strong>Grant admin consent.</strong> Select <em>Grant admin consent</em> for your tenant. The Fabric token is requested silently after the Power BI sign-in, so a user never gets the chance to approve it. Without consent, Fabric stays not ready.</>,
+                <><strong>Give each person workspace access.</strong> Device code can only see what the signed-in person can see, so each user needs the workspace roles in Step 04.</>,
+                <><strong>Sign in.</strong> In the application, open Workspace › Power BI setup, choose Device code, enter the tenant and client IDs, and select Start Microsoft sign-in. Finish the Microsoft prompt, then use Check status until Power BI and Fabric both show Connected.</>,
               ]}
             />
 
             <div className="grid gap-4 md:grid-cols-2">
-              <InfoPanel icon={UserCheck} title="Delegated permissions requested by the backend">
+              <InfoPanel icon={UserCheck} title="Delegated permissions the application requests">
                 <ul className="space-y-2 text-sm text-zinc-700">
-                  {powerBiScopes.map((scope) => (
-                    <li key={scope} className="flex gap-2">
+                  {delegatedScopes.map(([provider, scope]) => (
+                    <li key={`${provider}-${scope}`} className="flex gap-2">
                       <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-                      <code className="break-all text-xs sm:text-sm">{scope}</code>
+                      <span><span className="text-zinc-500">{provider}:</span> <code className="break-all text-xs sm:text-sm">{scope}</code></span>
                     </li>
                   ))}
                 </ul>
+                <p className="mt-3 text-xs leading-5 text-zinc-500">No tenant-wide permission such as <code>Tenant.Read.All</code> is requested. The Admin Scanner uses the service principal instead.</p>
               </InfoPanel>
               <InfoPanel icon={FileKey2} title="Values to collect">
                 <DefinitionList
                   items={[
-                    ["Tenant ID", "Directory identifier from Microsoft Entra overview"],
-                    ["Client ID", "Application identifier from the app registration"],
-                    ["Client secret", "Service principal only; record the value once and protect it"],
-                    ["Callback URI", "Browser SSO only; must equal MICROSOFT_SSO_REDIRECT_URI"],
-                    ["Workspace access", "User or app identity must be granted the required content role"],
+                    ["Tenant ID", "Directory (tenant) ID from the app's Overview page"],
+                    ["Client ID", "Application (client) ID from the same page"],
+                    ["Client secret", "None. Device code never uses a secret"],
+                    ["Admin consent", "Granted for all four permissions"],
                   ]}
                 />
               </InfoPanel>
             </div>
+          </GuideSection>
 
-            <Subheading title="Prepare a service principal" />
+          <GuideSection
+            id="service-principal"
+            number="03"
+            icon={Building2}
+            title="Create a service principal"
+            description="A service principal signs in as the application itself. It needs its own app registration, a client secret, membership in an allowed security group, and a role in every workspace it reads."
+          >
             <NumberedSteps
               items={[
-                <>Create a client secret under Certificates and secrets, record the secret <strong>value</strong>, and define an expiry and rotation owner.</>,
-                <>Place the enterprise application/service principal in a dedicated Microsoft Entra security group.</>,
-                <>In the Fabric Admin portal, allow that group under the service-principal settings for the Power BI APIs and Fabric APIs required by your chosen operations.</>,
-                <>Add the service principal or its allowed group to each workspace with the minimum role required by the Power BI and Fabric endpoints.</>,
-                <>Use the Service principal option on the Power BI setup page. A <code>partial</code> result means Power BI succeeded while Fabric still needs permission or tenant configuration.</>,
+                <><strong>Register a separate app.</strong> Create a second single-tenant app registration for the service principal and record its tenant and client IDs. Keeping it apart from the user sign-in app keeps it free of delegated permissions.</>,
+                <><strong>Do not add API permissions.</strong> A service principal is authorized by Fabric tenant settings and workspace roles, not by API permissions. The read-only admin APIs used by the Scanner reject an app that carries admin-consent-required Power BI permissions.</>,
+                <><strong>Create a client secret.</strong> Under Certificates &amp; secrets, add a client secret and copy its <strong>Value</strong>, not the Secret ID. It is shown only once. Record the expiry date and who rotates it. The application supports client secrets, not certificates.</>,
+                <><strong>Create a security group.</strong> In Microsoft Entra ID › Groups, create a group with the group type Security, and add the service principal as a member by searching for the app name.</>,
+                <><strong>Allow the group to call the APIs.</strong> In the Fabric Admin portal, open Tenant settings › Developer settings and enable <em>Service principals can call Fabric public APIs</em> (called <em>Service principals can use Fabric APIs</em> in older tenants). Choose <em>Specific security groups</em>, add the group, and apply. This setting covers both the Power BI and Fabric calls.</>,
+                <><strong>Add it to workspaces.</strong> In each workspace, open Manage access and add the service principal or its group with the role from Step 04. Tenant settings alone do not show it any content.</>,
+                <><strong>Connect.</strong> In Workspace › Power BI setup, choose Service principal, enter the tenant ID, client ID, and secret value, and select Connect service principal. <em>Partial</em> means Power BI connected but Fabric did not; re-check the tenant setting and the workspace role. Tenant-setting changes can take up to 15 minutes to apply.</>,
               ]}
             />
 
-            <Callout tone="sky" icon={ShieldCheck} title="Interactive and unattended access are different">
-              Delegated sign-in acts with a person&apos;s access. A service principal acts as the application and must be independently permitted by tenant settings and workspace roles. Do not use a client secret for device code or browser SSO.
+            <div className="grid gap-4 md:grid-cols-2">
+              <InfoPanel icon={FileKey2} title="Values to collect">
+                <DefinitionList
+                  items={[
+                    ["Tenant ID", "Directory (tenant) ID"],
+                    ["Client ID", "Application (client) ID of the service principal's app"],
+                    ["Client secret", "The secret Value, kept in a secret store until it is entered"],
+                    ["Security group", "The group allowed in the Developer and Admin API tenant settings"],
+                  ]}
+                />
+              </InfoPanel>
+              <InfoPanel icon={ShieldCheck} title="Interactive and unattended access are different">
+                <p className="text-sm leading-6 text-zinc-700">
+                  Delegated sign-in acts with a person&apos;s access. A service principal acts as the application and must be allowed separately, by tenant settings and workspace roles. Never use the client secret with device code.
+                </p>
+              </InfoPanel>
+            </div>
+          </GuideSection>
+
+          <GuideSection
+            id="workspace-access"
+            number="04"
+            icon={FolderLock}
+            title="Grant workspace and item access"
+            description="Tenant settings let an identity call the APIs; workspace roles decide what it can see. Grant the same access to each person who uses device code, or to the service principal or its security group."
+          >
+            <GuideTable
+              minWidth="min-w-[860px]"
+              headers={["Application feature", "What it reads", "Minimum access"]}
+              rows={[
+                ["Overview, Workspace content", "Workspaces, reports, and semantic models", "Viewer on each workspace"],
+                ["Report details: Pages", "Report pages", "Viewer"],
+                ["Report details: Data sources, Semantic objects, Database mapping, Visual fields", "Report (PBIR) and semantic model (TMDL) definitions from Fabric", "Contributor. Fabric returns a definition only to an identity with read and write permission on the item"],
+                ["Report lineage, Table impact, Measure impact", "The same definitions for every report bound to the model", "Contributor on the report and model workspaces"],
+                ["A report bound to a model in another workspace", "The model's definition in its own workspace", "The same role in the model's workspace"],
+                ["Gateway sources (optional checkbox)", "Gateway data sources", "Gateway admin on each gateway"],
+                ["XMLA metadata (optional)", "Model metadata over the XMLA endpoint", "Build permission on the model, on a Premium, Fabric, or PPU capacity with the XMLA endpoint set to Read"],
+              ]}
+            />
+
+            <Callout tone="amber" icon={CircleAlert} title="Why Contributor">
+              Fabric only returns report and semantic model definitions to an identity that can edit the item, so Contributor is the lowest workspace role that loads the definition-based sections. The application itself only reads. With Viewer, the inventory and pages still load, and the definition-based sections show an access warning instead of data.
             </Callout>
           </GuideSection>
 
           <GuideSection
             id="scanner"
-            number="03"
+            number="05"
             icon={ScanSearch}
             title="Enable the Power BI Admin Scanner"
-            description="Scanner configuration is separate from ordinary workspace access. Complete this section only when tenant-wide inventory, dashboard metadata, datasource instances, or DAX and mashup extraction are required."
+            description="The Scanner reads tenant-wide metadata through the Power BI admin APIs. It works only with the service principal and is optional; skip this step if workspace-level access is enough."
           >
             <NumberedSteps
               items={[
-                <>Use a dedicated service principal and security group approved by a Fabric administrator.</>,
-                <>In Admin portal, open Tenant settings, then Admin API settings, and allow the group to use read-only Power BI admin APIs.</>,
-                <>Enable enhanced admin API responses with detailed metadata for table, column, and measure metadata.</>,
-                <>Enable enhanced admin API responses with DAX and mashup expressions when expressions and Power Query source evidence are required. The detailed-metadata setting must be enabled first.</>,
-                <>For the Scanner-specific service-principal registration, follow Microsoft&apos;s rule not to add admin-consent-required Power BI permissions. Authorization comes from the allowed tenant security group.</>,
-                <>Allow tenant-setting changes time to propagate, sign in with the service principal, then run a small one-workspace scan before selecting a wider scope.</>,
+                <>Use the service principal from Step 03 and its security group. Device code cannot run the Scanner because it never requests tenant-wide permission.</>,
+                <>In the Fabric Admin portal, open Tenant settings › Admin API settings and enable <em>Service principals can access read-only admin APIs</em> for the group under <em>Specific security groups</em>.</>,
+                <>Enable <em>Enhance admin APIs responses with detailed metadata</em> for table, column, and measure metadata.</>,
+                <>Enable <em>Enhance admin APIs responses with DAX and mashup expressions</em> when you need measure expressions and Power Query sources. It needs the detailed-metadata setting first.</>,
+                <>Confirm the app carries no admin-consent-required Power BI permissions: Microsoft Entra ID › Enterprise applications › your app › Permissions should list no Power BI permissions of type Application.</>,
+                <>Allow up to 15 minutes for the settings to apply, connect as the service principal, and run a one-workspace scan before a wider one. Each scan uses Microsoft admin API quota.</>,
               ]}
             />
 
@@ -290,210 +359,140 @@ export function SetupGuide() {
               </InfoPanel>
               <InfoPanel icon={CircleAlert} title="What Scanner does not replace">
                 <ul className="space-y-2 text-sm leading-6 text-zinc-700">
-                  <Bullet>Workspace access needed by ordinary report and Fabric definition endpoints.</Bullet>
-                  <Bullet>Fabric item permissions required to retrieve PBIR or TMDL definitions.</Bullet>
-                  <Bullet>Capacity, XMLA, gateway-administrator, or Snowflake permissions.</Bullet>
+                  <Bullet>The workspace roles that ordinary report and Fabric definition calls need.</Bullet>
+                  <Bullet>Contributor access for PBIR and TMDL definitions.</Bullet>
+                  <Bullet>XMLA, gateway-admin, or Snowflake permissions.</Bullet>
                 </ul>
               </InfoPanel>
             </div>
-
-            <details className="border border-zinc-200 bg-white px-4 py-3 open:pb-4">
-              <summary className="cursor-pointer text-sm font-semibold text-zinc-950">Optional XMLA metadata setup</summary>
-              <div className="mt-4 space-y-3 text-sm leading-6 text-zinc-600">
-                <p>Native XMLA extraction is optional and Windows-specific. Install the x64 Microsoft Analysis Services OLE DB provider (MSOLAP) on the backend host and keep a 64-bit Python runtime.</p>
-                <p>The workspace must use a compatible Fabric, Premium, Embedded, or PPU capacity with XMLA enabled. Grant the identity workspace access and Build/read access to the semantic model and any upstream model it uses.</p>
-                <p>Configure <code>XMLA_PROVIDER=MSOLAP</code> and set <code>XMLA_TENANT_NAME</code> when <code>myorg</code> is not correct for the tenant.</p>
-              </div>
-            </details>
           </GuideSection>
 
           <GuideSection
             id="snowflake"
-            number="04"
+            number="06"
             icon={Snowflake}
-            title="Configure optional Snowflake access"
-            description="Snowflake is the currently implemented optional database connector for live source enrichment and deep table or column lineage. The Database setup area is designed to support additional providers over time, and Power BI inventory can be used without a database session."
+            title="Create the Snowflake read role"
+            description="Snowflake is the database connector for source enrichment and deep table and column lineage. The role below can read every object in the chosen databases and the SNOWFLAKE.ACCOUNT_USAGE views, including ACCESS_HISTORY, that lineage is built from. It cannot change anything."
           >
-            <Subheading title="Choose an authentication method" />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <MethodPanel title="Password or MFA" badge="Interactive" text="Useful for a controlled manual session. Choose the MFA authenticator when the Snowflake user policy requires a passcode or approval." />
-              <MethodPanel title="RSA key pair" badge="Hosted" text="Well suited to unattended operation. Register the public key on a dedicated Snowflake user and protect the private PEM and passphrase outside source control." />
-              <MethodPanel title="OAuth token" badge="Enterprise" text="Use an access token issued through your approved Snowflake OAuth integration. Token lifecycle and renewal remain an operator responsibility." />
-              <MethodPanel title="External browser" badge="Local only" text="The browser opens on the backend host, not on the end user's computer. Keep this method disabled for remote containers and unattended servers." />
-            </div>
-
-            <Subheading title="Prepare the Snowflake role" />
-            <NumberedSteps
-              items={[
-                <>Create or choose a dedicated Snowflake user and a least-privilege role. Avoid using <code>ACCOUNTADMIN</code> for routine application sessions.</>,
-                <>Grant the role access to the warehouse and visibility/access for the target databases, schemas, tables, views, and columns that will be traced.</>,
-                <>Confirm the account edition and role can use <code>SNOWFLAKE.CORE.GET_LINEAGE</code>. The function requires Enterprise Edition or higher, and inaccessible objects return an error rather than hidden lineage.</>,
-                <>Collect the account identifier and user. Add the warehouse, database, schema, and role when you want a predictable session context.</>,
-                <>On the Database setup page, choose the matching method, connect, and use Check status to verify the current account, user, role, warehouse, database, schema, and remaining session time.</>,
+            <Subheading title="What the role is granted" />
+            <GuideTable
+              minWidth="min-w-[760px]"
+              headers={["Grant", "What it gives the application"]}
+              rows={[
+                [<code>USAGE</code>, "A warehouse to run lineage and metadata queries."],
+                [<code>USAGE, SELECT</code>, "Every schema, table, view, materialized view, dynamic table, external table, and stream in each database, including ones created later. Lineage stops at any object the role cannot read."],
+                [<code>IMPORTED PRIVILEGES</code>, <>All <code>SNOWFLAKE.ACCOUNT_USAGE</code> views: <code>ACCESS_HISTORY</code> (which queries read and wrote which columns), <code>QUERY_HISTORY</code>, and <code>OBJECT_DEPENDENCIES</code> (which views depend on which tables).</>],
+                [<code>VIEW LINEAGE</code>, <>Calls to <code>SNOWFLAKE.CORE.GET_LINEAGE</code>. The PUBLIC role holds it by default; granting it directly keeps lineage working if it is revoked from PUBLIC.</>],
               ]}
             />
 
-            <div className="overflow-x-auto border border-zinc-200 bg-white">
-              <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-                <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
-                  <tr>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Application field</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Meaning</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Required</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 text-zinc-700">
-                  <ValueRow field="Account identifier" meaning="Snowflake connector account identifier for your organization and account" requirement="Yes" />
-                  <ValueRow field="User" meaning="Snowflake identity associated with the selected authentication method" requirement="Yes" />
-                  <ValueRow field="Warehouse" meaning="Compute warehouse available to the lineage session" requirement="Recommended" />
-                  <ValueRow field="Database and schema" meaning="Default object context; fully qualified objects can still be traced" requirement="Recommended" />
-                  <ValueRow field="Role" meaning="Least-privilege role with target-object and lineage access" requirement="Recommended" />
-                  <ValueRow field="Credential" meaning="Password/passcode, private PEM/passphrase, or OAuth token" requirement="Depends on method" />
-                </tbody>
-              </table>
+            <Subheading title="Create the role" />
+            <CodeBlock label="Snowflake worksheet · SECURITYADMIN and ACCOUNTADMIN" value={snowflakeRoleScript} />
+
+            <details className="border border-zinc-200 bg-white px-4 py-3 open:pb-4">
+              <summary className="cursor-pointer text-sm font-semibold text-zinc-950">Narrower alternative to IMPORTED PRIVILEGES</summary>
+              <div className="mt-4 space-y-3 text-sm leading-6 text-zinc-600">
+                <p><code>IMPORTED PRIVILEGES</code> opens every account usage view. To limit the role to the views lineage uses, grant these two SNOWFLAKE database roles instead of the <code>IMPORTED PRIVILEGES</code> line.</p>
+                <CodeBlock label="Snowflake worksheet · ACCOUNTADMIN" value={snowflakeDatabaseRoles} />
+              </div>
+            </details>
+
+            <Subheading title="Create the application user" />
+            <p className="text-sm leading-6 text-zinc-600">
+              Create a dedicated service user that signs in with a key pair. The setup screen takes the private key without a passphrase, so generate an unencrypted PKCS#8 key and keep it in your secret store.
+            </p>
+            <CodeBlock label="Terminal with OpenSSL" value={snowflakeKeyPair} />
+            <CodeBlock label="Snowflake worksheet · USERADMIN and SECURITYADMIN" value={snowflakeUserScript} />
+            <p className="text-sm leading-6 text-zinc-600">
+              A <code>TYPE = SERVICE</code> user cannot sign in with a password. To use password sign-in instead, grant <code>LINEAGE_READER</code> to a person&apos;s user.
+            </p>
+
+            <Subheading title="Check the role" />
+            <CodeBlock label="Snowflake worksheet · LINEAGE_READER" value={snowflakeCheckScript} />
+
+            <InfoPanel icon={CircleAlert} title="Good to know">
+              <ul className="space-y-2 text-sm leading-6 text-zinc-700">
+                <Bullet>Account usage views lag behind: <code>ACCESS_HISTORY</code> and <code>OBJECT_DEPENDENCIES</code> by up to 3 hours, <code>QUERY_HISTORY</code> by up to 45 minutes. New objects appear after that.</Bullet>
+                <Bullet><code>GET_LINEAGE</code> needs Enterprise Edition or higher and traces at most 5 levels per call; the application goes deeper by repeating the call.</Bullet>
+                <Bullet>A schema&apos;s own future grants take precedence over the database-level future grants above. If a schema already has future grants, repeat the grants for that schema.</Bullet>
+                <Bullet>Do not use <code>ACCOUNTADMIN</code> or <code>SYSADMIN</code> as the application&apos;s role; both can change data.</Bullet>
+              </ul>
+            </InfoPanel>
+
+            <Subheading title="Choose how the application signs in to Snowflake" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <MethodPanel title="Key pair" badge="Recommended" text="For the service user above. Paste the unencrypted private key PEM on the Database setup page." />
+              <MethodPanel title="OAuth token" badge="Enterprise" text="An access token from your approved Snowflake OAuth integration, issued for LINEAGE_READER. Renewing the token stays with you." />
+              <MethodPanel title="Password" badge="Person user" text="For a person's user that holds LINEAGE_READER. Snowflake is phasing out single-factor passwords, so prefer a key pair." />
+              <MethodPanel title="External browser" badge="Local only" text="Opens a browser on the backend host, not on your computer. It stays off unless the backend operator turns it on." />
             </div>
 
-            <Callout tone="amber" icon={LockKeyhole} title="Session and secret behavior">
-              Microsoft and Snowflake sessions are separate HttpOnly cookies. Snowflake connections live only in the backend process and expire after 45 minutes by default. Submitted passwords, tokens, and private keys must remain transient and must never be copied into browser storage, logs, Git, or a frontend build.
+            <GuideTable
+              headers={["Application field", "What to enter", "Required"]}
+              rows={[
+                ["Account identifier", <>Your <code>orgname-account_name</code> identifier, not a URL</>, "Yes"],
+                ["User", <><code>PBI_LINEAGE_SVC</code>, or the person&apos;s user that holds the role</>, "Yes"],
+                ["Role", <><code>LINEAGE_READER</code></>, "Recommended"],
+                ["Warehouse", "The warehouse granted to the role", "Recommended"],
+                ["Database and schema", "Default context; fully qualified names still trace", "Optional"],
+                ["Credential", "Private key PEM, OAuth token, or password, depending on the method", "Depends on method"],
+              ]}
+            />
+
+            <Callout tone="amber" icon={LockKeyhole} title="Keep credentials out of the browser">
+              Microsoft and Snowflake sessions are separate. Credentials are sent once to the backend and never stored in browser storage. Keep the private key, OAuth token, and passwords in a secret store, never in Git, screenshots, or chat.
             </Callout>
-          </GuideSection>
-
-          <GuideSection
-            id="backend"
-            number="05"
-            icon={ServerCog}
-            title="Configure the FastAPI backend and host"
-            description="The frontend and backend are independent repositories. They can share one Windows machine, but they should communicate only through HTTP and retain separate builds, deployment paths, and source control."
-          >
-            <Subheading title="Install and start locally" />
-            <CodeBlock label="Windows terminal" value={backendInstall} />
-            <p className="text-sm leading-6 text-zinc-600">
-              The full backend package already includes the Snowflake Connector, Snowpark, and cryptography dependencies. Run one API worker because Microsoft sessions, Snowflake connections, cache entries, and scan coordination are currently process-local.
-            </p>
-
-            <Subheading title="Review the backend environment" />
-            <div className="overflow-x-auto border border-zinc-200 bg-white">
-              <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
-                  <tr>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Setting</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">When to configure it</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Rule</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 text-zinc-700">
-                  <SettingRow name="CORS_ALLOWED_ORIGINS" use="Frontend and API use different origins" rule="JSON list of exact browser origins; same-origin IIS needs no CORS origin" />
-                  <SettingRow name="ALLOWED_HOSTS" use="Every non-local deployment" rule="Use explicit public/internal host names rather than a wildcard" />
-                  <SettingRow name="MICROSOFT_SSO_REDIRECT_URI" use="Browser SSO only" rule="Must exactly match the registered public-client callback" />
-                  <SettingRow name="LINEAGE_ADMIN_API_KEY" use="Protected Scanner, lineage, Snowflake, and app-auth routes" rule="Only an authenticated server-side gateway or operator client may send it; never compile it into JavaScript" />
-                  <SettingRow name="AUTH_COOKIE_SECURE" use="HTTPS production" rule="Set true in production; local HTTP requires false" />
-                  <SettingRow name="AUTH_COOKIE_SAMESITE" use="Cookie policy" rule="Keep lax for the normal same-origin/redirect flow unless architecture requires otherwise" />
-                  <SettingRow name="FORCE_HTTPS" use="Direct HTTPS or a scheme-aware reverse proxy" rule="Enable only when the original HTTPS scheme is forwarded correctly; otherwise enforce HTTPS at IIS" />
-                  <SettingRow name="ENABLE_API_DOCS" use="Developer-only API documentation" rule="Keep true locally and false on a public production host" />
-                  <SettingRow name="SNOWFLAKE_ALLOW_EXTERNAL_BROWSER_AUTH" use="Backend-host browser SSO" rule="Keep false for remote, containerized, or unattended operation" />
-                  <SettingRow name="LINEAGE_DATABASE_PATH" use="Persistent snapshots and scan jobs" rule="Use a durable absolute path when the working directory can change" />
-                  <SettingRow name="XMLA_PROVIDER / XMLA_TENANT_NAME" use="Optional native XMLA" rule="Match the installed MSOLAP provider and tenant path" />
-                </tbody>
-              </table>
-            </div>
-
-            <div className="grid min-w-0 gap-4 md:grid-cols-2">
-              <div className="min-w-0">
-                <p className="mb-2 text-sm font-semibold text-zinc-950">Local development example</p>
-                <CodeBlock label=".env" value={localEnvironment} />
-              </div>
-              <div className="min-w-0">
-                <p className="mb-2 text-sm font-semibold text-zinc-950">Production policy example</p>
-                <CodeBlock label=".env" value={productionEnvironment} />
-              </div>
-            </div>
-
-            <Subheading title="Connect the frontend" />
-            <CodeBlock label="Second Windows terminal" value={frontendCommands} />
-            <div className="grid gap-4 md:grid-cols-2">
-              <InfoPanel icon={SquareTerminal} title="Development">
-                <p className="text-sm leading-6 text-zinc-700">Keep FastAPI on <code>127.0.0.1:8000</code> and open the frontend with <code>localhost:5173</code>. Vite proxies relative API and OpenAPI requests to FastAPI.</p>
-              </InfoPanel>
-              <InfoPanel icon={Workflow} title="IIS production">
-                <p className="text-sm leading-6 text-zinc-700">Serve <code>build/client</code> as static files, rewrite application routes to <code>index.html</code>, and reverse-proxy <code>/api</code> plus <code>/openapi.json</code> to the loopback backend. Keep the backend port private.</p>
-              </InfoPanel>
-            </div>
-            <p className="text-sm leading-6 text-zinc-600">
-              For same-origin IIS hosting, leave <code>VITE_API_ORIGIN</code> blank. Do not place Microsoft secrets, Snowflake credentials, or the backend administration key in a <code>VITE_*</code> variable because Vite values are visible in the browser bundle.
-            </p>
-          </GuideSection>
-
-          <GuideSection
-            id="use-application"
-            number="06"
-            icon={Workflow}
-            title="Use the application in order"
-            description="Once administrators and the backend operator complete their work, an analyst can follow this sequence without needing to understand internal object IDs."
-          >
-            <ol className="divide-y divide-zinc-200 border-y border-zinc-200 bg-white">
-              <ApplicationStep number="1" title="Read this guide" text="Confirm the required people, identity mode, tenant settings, and optional integrations are ready." />
-              <ApplicationStep number="2" title="Review the overview" text="Understand the source-to-report workflow and the evidence each analysis view provides." />
-              <ApplicationStep number="3" title="Connect Power BI" text="Enter the tenant and application details, finish sign-in, then check both Power BI and Fabric status." />
-              <ApplicationStep number="4" title="Connect Snowflake when needed" text="Choose an approved authentication method and confirm the resolved role and session context." />
-              <ApplicationStep number="5" title="Open Explorer" text="Select a workspace and report by name; inspect assets, report detail, semantic objects, and column mappings." />
-              <ApplicationStep number="6" title="Run focused lineage" text="Use Report Lineage, Table Impact, or Measure Impact for directed dependency diagrams and exportable evidence." />
-              <ApplicationStep number="7" title="Run Scanner deliberately" text="Choose a small workspace scope first, wait for completion, then inspect the full administrative inventory." />
-            </ol>
-            <div className="flex flex-wrap gap-3">
-              <Button nativeButton={false} variant="outline" render={<Link to="/" />}>
-                Open overview
-              </Button>
-              <Button nativeButton={false} render={<Link to="/workspace/power-bi" />}>
-                Start Power BI setup
-                <ArrowRight data-icon="inline-end" className="size-4" />
-              </Button>
-            </div>
           </GuideSection>
 
           <GuideSection
             id="verification"
             number="07"
             icon={CheckCircle2}
-            title="Verify the setup and resolve common failures"
-            description="Validate one layer at a time. A green backend check proves the API is reachable; it does not prove Microsoft, Fabric, Scanner, XMLA, or Snowflake authorization."
+            title="Verify access and resolve common failures"
+            description="Check one identity at a time. A connected status proves the sign-in worked; the checks below prove the access behind it."
           >
             <Checklist
               title="Acceptance checklist"
               items={[
-                "The header reports Backend online through the same origin used by the browser.",
-                "Power BI status is connected and at least one expected workspace is listed by name.",
-                "Fabric status is connected and one report definition or semantic model definition loads.",
+                "Device code: Power BI and Fabric both show Connected, and an expected workspace is listed by name.",
+                "Service principal: the same result with the Service principal option, and no Partial status.",
+                "A report's Semantic objects and Visual fields load, which proves Fabric definition access.",
                 "If enabled, a one-workspace Scanner run reaches Succeeded and returns detailed metadata.",
-                "If enabled, Snowflake status shows the intended account, user, role, warehouse, database, and schema.",
-                "Explorer and focused lineage views load evidence, and a representative table can be copied and downloaded.",
+                "Database setup shows LINEAGE_READER as the role and the intended warehouse.",
+                "A Snowflake table trace returns upstream objects.",
               ]}
             />
 
-            <div className="overflow-x-auto border border-zinc-200 bg-white">
-              <table className="w-full min-w-[900px] border-collapse text-left text-sm">
-                <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
-                  <tr>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Symptom</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Check first</th>
-                    <th className="border-b border-zinc-200 px-4 py-3 font-semibold">Likely owner</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 text-zinc-700">
-                  <TroubleRow symptom="Backend offline" check="FastAPI process, health route, Vite/IIS proxy, firewall, and exact browser host" owner="Backend operator" />
-                  <TroubleRow symptom="Microsoft sign-in will not start" check="Tenant/client IDs, public-client flow, redirect configuration, and outbound HTTPS" owner="Entra administrator" />
-                  <TroubleRow symptom="Power BI ready, Fabric partial" check="Fabric delegated permission or service-principal tenant setting, workspace role, and item identity support" owner="Fabric administrator" />
-                  <TroubleRow symptom="Workspace or report missing" check="The signed-in identity's workspace role and object access; do not troubleshoot with IDs first" owner="Workspace administrator" />
-                  <TroubleRow symptom="Scanner returns 401/403" check="Dedicated group, read-only Admin API setting, metadata settings, service-principal session, and admin-key policy" owner="Fabric/backend administrator" />
-                  <TroubleRow symptom="Definition or XMLA data is partial" check="Fabric item access, compatible capacity, XMLA setting, Build permission, and MSOLAP installation" owner="Workspace/backend administrator" />
-                  <TroubleRow symptom="Snowflake cannot connect" check="Account identifier, authentication policy, credential method, role, warehouse, and outbound HTTPS" owner="Snowflake administrator" />
-                  <TroubleRow symptom="Snowflake lineage is empty or denied" check="Enterprise Edition, object accessibility, role context, and whether Snowflake has lineage evidence" owner="Snowflake administrator" />
-                </tbody>
-              </table>
-            </div>
+            <GuideTable
+              minWidth="min-w-[900px]"
+              headers={["Symptom", "Check first", "Likely owner"]}
+              rows={[
+                ["Device code sign-in fails at once", "Allow public client flows is Yes on the app, and the tenant and client IDs match", "Entra administrator"],
+                ["Power BI ready, Fabric not ready", "Admin consent for the delegated permissions (device code), or the Fabric public APIs tenant setting for the group (service principal)", "Entra or Fabric administrator"],
+                ["Service principal is rejected", "Secret Value rather than Secret ID, secret expiry, group membership, tenant-setting scope, and up to 15 minutes for changes", "Entra or Fabric administrator"],
+                ["Workspace or report missing", "The identity has a role in that workspace; a service principal must be added explicitly", "Workspace administrator"],
+                ["Definition sections show an access warning", "Contributor on the report and model workspaces, and no protected sensitivity label on the item", "Workspace administrator"],
+                ["Scanner returns 401 or 403", "Read-only admin API setting for the group, the metadata settings, and no admin-consent-required permissions on the app", "Fabric administrator"],
+                ["Snowflake cannot connect", "Account identifier format, user type (service users need a key pair or OAuth), registered public key, and network policy", "Snowflake administrator"],
+                ["Account usage or access history not authorized", "IMPORTED PRIVILEGES on SNOWFLAKE, or the OBJECT_VIEWER and GOVERNANCE_VIEWER database roles", "Snowflake administrator"],
+                ["Snowflake lineage empty or denied", "Enterprise Edition, SELECT on the traced object, VIEW LINEAGE, and account usage latency for new objects", "Snowflake administrator"],
+              ]}
+            />
 
-            <Callout tone="rose" icon={CircleAlert} title="Do not solve authorization failures by exposing secrets">
-              Never put a client secret, Snowflake credential, OAuth token, private key, session cookie, or administration key into a screenshot, exported table, URL, source file, frontend environment variable, or support message. Use sanitized status and error codes for troubleshooting.
+            <Callout tone="rose" icon={CircleAlert} title="Do not solve access failures by exposing secrets">
+              Never put a client secret, Snowflake credential, OAuth token, private key, or session cookie into a screenshot, exported table, URL, source file, or support message. Use the sanitized status and error codes for troubleshooting.
             </Callout>
+
+            <div className="flex flex-wrap gap-3">
+              <Button nativeButton={false} render={<Link to="/workspace/power-bi" />}>
+                Start Power BI setup
+                <ArrowRight data-icon="inline-end" className="size-4" />
+              </Button>
+              <Button nativeButton={false} variant="outline" render={<Link to="/workspace/database" />}>
+                <Database className="size-4" />
+                Connect Snowflake
+              </Button>
+            </div>
           </GuideSection>
 
           <GuideSection
@@ -501,26 +500,29 @@ export function SetupGuide() {
             number="08"
             icon={BookOpenCheck}
             title="References"
-            description="Use the official product documentation as the authority for current permissions, tenant labels, authentication policy, and feature availability."
+            description="Use the official product documentation as the authority for current permissions, tenant setting names, authentication policy, and feature availability."
           >
             <div className="grid gap-4 md:grid-cols-2">
               <ReferenceGroup
-                title="Microsoft Power BI and Fabric"
+                title="Microsoft Entra, Power BI, and Fabric"
                 links={[
-                  ["Power BI REST API overview", "https://learn.microsoft.com/en-us/rest/api/power-bi/"],
                   ["Register a Microsoft Entra application", "https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app"],
+                  ["Power BI REST API overview", "https://learn.microsoft.com/en-us/rest/api/power-bi/"],
                   ["Fabric REST API identity support", "https://learn.microsoft.com/en-us/rest/api/fabric/articles/identity-support"],
+                  ["Developer tenant settings for service principals", "https://learn.microsoft.com/en-us/fabric/admin/service-admin-portal-developer"],
+                  ["Enable service principals for admin APIs", "https://learn.microsoft.com/en-us/fabric/admin/enable-service-principal-admin-apis"],
                   ["Set up metadata scanning", "https://learn.microsoft.com/en-us/fabric/admin/metadata-scanning-setup"],
                   ["Admin API tenant settings", "https://learn.microsoft.com/en-us/fabric/admin/service-admin-portal-admin-api-settings"],
-                  ["Analysis Services client libraries", "https://learn.microsoft.com/en-us/analysis-services/client-libraries"],
+                  ["Fabric Get Item Definition permissions", "https://learn.microsoft.com/en-us/rest/api/fabric/core/items/get-item-definition"],
                 ]}
               />
               <ReferenceGroup
                 title="Snowflake"
                 links={[
-                  ["Snowflake connection options", "https://docs.snowflake.com/en/guides-overview-connecting"],
-                  ["Python Connector connections", "https://docs.snowflake.com/en/developer-guide/python-connector/python-connector-connect"],
-                  ["Snowpark Python setup", "https://docs.snowflake.com/en/developer-guide/snowpark/python/setup"],
+                  ["Account Usage views and database roles", "https://docs.snowflake.com/en/sql-reference/account-usage"],
+                  ["ACCESS_HISTORY view", "https://docs.snowflake.com/en/sql-reference/account-usage/access_history"],
+                  ["Data lineage access control", "https://docs.snowflake.com/en/user-guide/ui-snowsight-lineage"],
+                  ["GRANT privileges", "https://docs.snowflake.com/en/sql-reference/sql/grant-privilege"],
                   ["Key-pair authentication", "https://docs.snowflake.com/en/user-guide/key-pair-auth"],
                   ["SNOWFLAKE.CORE.GET_LINEAGE", "https://docs.snowflake.com/en/sql-reference/functions/get_lineage-snowflake-core"],
                 ]}
@@ -576,24 +578,30 @@ function Subheading({ title }: { title: string }) {
   return <h3 className="border-l-2 border-cyan-600 pl-3 text-base font-semibold text-zinc-950">{title}</h3>;
 }
 
-function RoleRow({ owner, responsibility, evidence }: { owner: string; responsibility: string; evidence: string }) {
-  return <tr><td className="px-4 py-3 font-medium text-zinc-950">{owner}</td><td className="px-4 py-3 leading-6">{responsibility}</td><td className="px-4 py-3 leading-6">{evidence}</td></tr>;
-}
-
-function AuthRow({ mode, use, input, setup }: { mode: string; use: string; input: string; setup: string }) {
-  return <tr><td className="px-4 py-3 font-medium text-zinc-950">{mode}</td><td className="px-4 py-3 leading-6">{use}</td><td className="px-4 py-3 leading-6">{input}</td><td className="px-4 py-3 leading-6">{setup}</td></tr>;
-}
-
-function ValueRow({ field, meaning, requirement }: { field: string; meaning: string; requirement: string }) {
-  return <tr><td className="px-4 py-3 font-medium text-zinc-950">{field}</td><td className="px-4 py-3 leading-6">{meaning}</td><td className="px-4 py-3">{requirement}</td></tr>;
-}
-
-function SettingRow({ name, use, rule }: { name: string; use: string; rule: string }) {
-  return <tr><td className="px-4 py-3"><code className="break-all text-xs font-semibold text-zinc-950">{name}</code></td><td className="px-4 py-3 leading-6">{use}</td><td className="px-4 py-3 leading-6">{rule}</td></tr>;
-}
-
-function TroubleRow({ symptom, check, owner }: { symptom: string; check: string; owner: string }) {
-  return <tr><td className="px-4 py-3 font-medium text-zinc-950">{symptom}</td><td className="px-4 py-3 leading-6">{check}</td><td className="px-4 py-3 leading-6">{owner}</td></tr>;
+// The first column names the row; wide tables scroll inside their own border.
+function GuideTable({ headers, rows, minWidth = "min-w-[720px]" }: { headers: string[]; rows: ReactNode[][]; minWidth?: string }) {
+  return (
+    <div className="overflow-x-auto border border-zinc-200 bg-white">
+      <table className={`w-full ${minWidth} border-collapse text-left text-sm`}>
+        <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
+          <tr>
+            {headers.map((header) => (
+              <th key={header} className="border-b border-zinc-200 px-4 py-3 font-semibold">{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-200 text-zinc-700">
+          {rows.map((cells, rowIndex) => (
+            <tr key={rowIndex}>
+              {cells.map((cell, cellIndex) => (
+                <td key={cellIndex} className={cellIndex === 0 ? "px-4 py-3 font-medium text-zinc-950" : "px-4 py-3 leading-6"}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function NumberedSteps({ items }: { items: ReactNode[] }) {
@@ -691,16 +699,6 @@ function Callout({ tone, icon: Icon, title, children }: { tone: "amber" | "sky" 
         </div>
       </div>
     </div>
-  );
-}
-
-function ApplicationStep({ number, title, text }: { number: string; title: string; text: string }) {
-  return (
-    <li className="grid gap-2 px-4 py-4 sm:grid-cols-[40px_180px_minmax(0,1fr)] sm:items-start sm:gap-4">
-      <span className="font-mono text-xs font-semibold text-cyan-700">{number.padStart(2, "0")}</span>
-      <span className="text-sm font-semibold text-zinc-950">{title}</span>
-      <span className="text-sm leading-6 text-zinc-600">{text}</span>
-    </li>
   );
 }
 

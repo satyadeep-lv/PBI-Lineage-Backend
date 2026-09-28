@@ -8,7 +8,7 @@ export function meta({}: Route.MetaArgs) {
     { title: "Setup Guide | PBI Lineage Explorer" },
     {
       name: "description",
-      content: "Configure Microsoft Power BI, Fabric, the current database connector, and the FastAPI backend before using PBI Lineage Explorer.",
+      content: "Create the Microsoft Entra app, service principal, and read-only Snowflake role PBI Lineage Explorer needs to access workspaces and lineage.",
     },
   ];
 }
