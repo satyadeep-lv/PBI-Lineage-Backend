@@ -63,10 +63,11 @@ const documentItems = [
   },
 ];
 
+/** The underline grows out from the centre on hover and settles in the brand colour on the current page. */
 const headerNavItemClass =
-  "relative flex items-center px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground lg:px-4";
+  "relative flex items-center px-3 text-sm font-medium text-muted-foreground outline-none transition-colors duration-300 ease-apple hover:text-foreground focus-visible:text-foreground after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:origin-center after:scale-x-0 after:rounded-full after:bg-foreground/20 after:transition-transform after:duration-300 after:ease-apple hover:after:scale-x-100 focus-visible:after:scale-x-100 lg:px-4 lg:after:inset-x-4";
 const headerNavItemActiveClass =
-  "text-foreground after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-fabric lg:after:inset-x-4";
+  "text-foreground after:scale-x-100 after:bg-fabric";
 
 async function checkHealth(apiOrigin: string) {
   const response = await fetch(`${apiOrigin}/api/v1/health`, {
@@ -132,7 +133,7 @@ export function AppHeader({ showHealth = true }: { showHealth?: boolean }) {
   });
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur-sm">
+    <header className="sticky top-0 z-40 border-b border-border/70 bg-surface/75 backdrop-blur-xl backdrop-saturate-150">
       <div className="mx-auto flex min-h-16 max-w-screen-2xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         <Link to="/" className="flex min-w-0 items-center gap-3" aria-label="PBI Lineage Explorer home">
           {/* Transparent logo mark; the dark-theme copy swaps its navy strokes for light slate. */}
@@ -216,7 +217,7 @@ function MobileNavigationLink({
       to={item.to}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "border-l-2 py-3 text-sm font-medium transition-colors",
+        "border-l-2 py-3 text-sm font-medium transition-colors duration-200 ease-apple",
         nested ? "pr-4 pl-7" : "px-4",
         active
           ? "border-fabric bg-accent text-accent-foreground"
@@ -262,14 +263,14 @@ function DocumentsMenu({ pathname }: { pathname: string }) {
       <DropdownMenuTrigger
         className={cn(
           headerNavItemClass,
-          "group cursor-pointer gap-1 data-popup-open:text-foreground",
+          "group cursor-pointer gap-1 data-popup-open:text-foreground data-popup-open:after:scale-x-100",
           active && headerNavItemActiveClass,
         )}
       >
         Documents
         <ChevronDown
           aria-hidden="true"
-          className="size-3.5 transition-transform duration-200 group-data-popup-open:rotate-180"
+          className="size-3.5 transition-transform duration-300 ease-apple group-data-popup-open:rotate-180"
         />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" sideOffset={6} className="w-96 p-1.5">
@@ -283,14 +284,16 @@ function DocumentsMenu({ pathname }: { pathname: string }) {
                 aria-current={current ? "page" : undefined}
                 aria-describedby={`${descriptionId}-${index}`}
                 className={cn(
-                  "cursor-pointer items-start gap-3 px-2.5 py-2",
+                  "group/doc cursor-pointer items-start gap-3 px-2.5 py-2",
                   current && "bg-accent/50 text-accent-foreground",
                 )}
               >
                 <span
                   className={cn(
-                    "flex size-8 shrink-0 items-center justify-center rounded-md border",
-                    current ? "border-fabric/30 bg-fabric/10 text-fabric" : "border-border bg-subtle text-muted-foreground",
+                    "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors duration-300 ease-apple",
+                    current
+                      ? "border-fabric/30 bg-fabric/10 text-fabric"
+                      : "border-border bg-subtle text-muted-foreground group-focus/doc:border-fabric/30 group-focus/doc:text-fabric",
                   )}
                 >
                   <item.icon className="size-4" />
@@ -326,7 +329,7 @@ function HealthBadge({ query, compact = false }: { query: HealthQuery; compact?:
   return (
     <Badge
       className={cn(
-        "rounded-md border px-2.5 py-1",
+        "rounded-full border px-2.5 py-1 transition-colors duration-300 ease-apple",
         query.isSuccess
           ? "border-success/30 bg-success/10 text-success"
           : query.isLoading

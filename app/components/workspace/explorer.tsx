@@ -36,7 +36,7 @@ import { requestJson, WORKSPACE_LIST_PATH, workspaceListKey } from "~/lib/lineag
 import { COLUMN, exportOnlyColumn, reportFormatLabel, reportTypeLabel, storageModeLabel, VALUE, yesNo } from "~/lib/naming";
 import { DEFAULT_SCAN_FLAGS, workspacePayload, type ScannerWorkspace } from "~/lib/scanner-api";
 import { useWorkspaceScan } from "~/lib/use-workspace-scan";
-import { cn } from "~/lib/utils";
+import { sectionTabClass } from "~/lib/interaction-styles";
 import { useAppStore } from "~/stores/app-store";
 import { usePowerAiStore } from "~/stores/power-ai-store";
 
@@ -191,7 +191,7 @@ export function Explorer() {
       <ExplorerGuidance />
       <div className="overflow-x-auto border-b border-border bg-subtle">
         <div className="flex min-w-max px-4 sm:px-6" role="tablist" aria-label="Explorer sections">
-          {tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} className={cn("border-b-2 px-4 py-3 text-left text-sm transition-colors", activeTab === tab.id ? "border-fabric font-semibold text-fabric" : "border-transparent text-muted-foreground hover:text-foreground")} title={tab.label}>{tab.shortLabel}</button>)}
+          {tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} className={sectionTabClass(activeTab === tab.id, "px-4 py-3 text-left")} title={tab.label}>{tab.shortLabel}</button>)}
         </div>
       </div>
 
@@ -342,7 +342,7 @@ function ScannerEvidenceResults({ workspace, exportContext }: { workspace: Scann
 
 function NameSelector({ id, label, items, selectedId, onChange }: { id: string; label: string; items: Array<{ id: string; name: string }>; selectedId: string; onChange: (id: string) => void }) {
   const selectedItem = items.find((item) => item.id === selectedId) ?? null;
-  return <div className="w-full space-y-1.5 xl:max-w-sm"><label className="text-xs font-semibold text-zinc-600" htmlFor={id}>{label}</label><select id={id} value={selectedId} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"><option value="" disabled>Select a {label.toLowerCase()}</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>{selectedItem && <p className="break-all text-xs text-zinc-500">{label} ID: <code className="text-zinc-700">{selectedItem.id}</code></p>}</div>;
+  return <div className="w-full space-y-1.5 xl:max-w-sm"><label className="text-xs font-semibold text-zinc-600" htmlFor={id}>{label}</label><select id={id} value={selectedId} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none transition-[border-color,box-shadow] duration-200 ease-apple hover:border-zinc-300 focus:border-teal-700 focus:ring-4 focus:ring-teal-100"><option value="" disabled>Select a {label.toLowerCase()}</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>{selectedItem && <p className="break-all text-xs text-zinc-500">{label} ID: <code className="text-zinc-700">{selectedItem.id}</code></p>}</div>;
 }
 
 function ReportSelector({ reports, selectedReport, onChange }: { reports: Report[]; selectedReport: Report | null; onChange: (id: string) => void }) {

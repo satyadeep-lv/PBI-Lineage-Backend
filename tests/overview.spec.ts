@@ -280,7 +280,7 @@ test.describe("Overview on desktop", () => {
     await expect(reports.getByRole("link")).toHaveCount(5);
   });
 
-  test("a report link opens Explorer with that report selected on the Reports tab", async ({ page }) => {
+  test("a report link opens Explorer with that report selected on the Report details tab", async ({ page }) => {
     const browserErrors = collectBrowserErrors(page);
     const backend = await mockBackend(page);
     await openOverview(page);
@@ -290,18 +290,18 @@ test.describe("Overview on desktop", () => {
 
     await expect(page.getByLabel("Workspace", { exact: true })).toHaveValue(finance.id);
     await expect(page.getByLabel("Report", { exact: true })).toHaveValue(revenueSummary.id);
-    await expect(page.getByText("Selected report ID:")).toContainText(revenueSummary.id);
-    await expect(page.getByRole("tab", { name: "Reports", exact: true })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("tab", { name: "Assets & access", exact: true })).toHaveAttribute("aria-selected", "false");
-    await expect(page.getByRole("tab", { name: "Page details", exact: true })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("heading", { name: "Report page details" })).toBeVisible();
+    await expect(page.getByText("Report ID:")).toContainText(revenueSummary.id);
+    await expect(page.getByRole("tab", { name: "Report details", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Workspace content", exact: true })).toHaveAttribute("aria-selected", "false");
+    await expect(page.getByRole("tab", { name: "Pages", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("heading", { name: "Report pages" })).toBeVisible();
     await expect(page.getByText("Summary", { exact: true })).toBeVisible();
 
     expect(backend.unhandled).toEqual([]);
     expect(browserErrors).toEqual([]);
   });
 
-  test("a semantic model link opens Explorer on the Semantic objects section of a report bound to it", async ({ page }) => {
+  test("a semantic model link opens Explorer on the Semantic objects section of a report connected to it", async ({ page }) => {
     const browserErrors = collectBrowserErrors(page);
     const backend = await mockBackend(page);
     await openOverview(page);
@@ -312,19 +312,19 @@ test.describe("Overview on desktop", () => {
     await expect(page.getByLabel("Workspace", { exact: true })).toHaveValue(finance.id);
     // Variance Analysis is the only Finance report bound to Forecast Model (and not the workspace's first report).
     await expect(page.getByLabel("Report", { exact: true })).toHaveValue(varianceAnalysis.id);
-    await expect(page.getByRole("tab", { name: "Reports", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Report details", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("tab", { name: "Semantic objects", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("heading", { name: "Semantic model objects" })).toBeVisible();
     await expect(page.getByText("Total Amount", { exact: true })).toBeVisible();
 
-    // A model no report in its workspace is bound to opens Assets & access for that workspace instead.
+    // A model no report in its workspace is connected to opens Workspace content for that workspace instead.
     await page.goBack();
     await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
     await regions(page).semanticModels.getByRole("link", { name: "Reference Model, in Shared Data", exact: true }).click();
     await expectExplorerUrl(page, { workspace: shared.id, model: referenceModel.id });
     await expect(page.getByLabel("Workspace", { exact: true })).toHaveValue(shared.id);
-    await expect(page.getByRole("tab", { name: "Assets & access", exact: true })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("tab", { name: "Reports", exact: true })).toHaveAttribute("aria-selected", "false");
+    await expect(page.getByRole("tab", { name: "Workspace content", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Report details", exact: true })).toHaveAttribute("aria-selected", "false");
 
     expect(backend.unhandled).toEqual([]);
     expect(browserErrors).toEqual([]);
@@ -339,8 +339,8 @@ test.describe("Overview on desktop", () => {
     await expectExplorerUrl(page, { workspace: operations.id });
 
     await expect(page.getByLabel("Workspace", { exact: true })).toHaveValue(operations.id);
-    await expect(page.getByText("Selected workspace ID:")).toContainText(operations.id);
-    await expect(page.getByRole("tab", { name: "Assets & access", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText("Workspace ID:")).toContainText(operations.id);
+    await expect(page.getByRole("tab", { name: "Workspace content", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByText("Fleet Status", { exact: true }).first()).toBeVisible();
 
     expect(backend.unhandled).toEqual([]);

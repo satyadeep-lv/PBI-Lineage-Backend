@@ -79,7 +79,7 @@ export function ContextChip() {
           onClick={clearPageContext}
           aria-label="Clear context for the next question"
           title="Clear context for the next question"
-          className="flex size-5 shrink-0 items-center justify-center rounded-full text-teal-700 hover:bg-teal-100 hover:text-teal-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+          className="flex size-5 shrink-0 items-center justify-center rounded-full text-teal-700 transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:bg-teal-100 hover:text-teal-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 active:scale-90"
         >
           <X className="size-3" aria-hidden />
         </button>

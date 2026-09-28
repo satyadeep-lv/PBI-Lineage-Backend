@@ -8,15 +8,20 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  *   Customers (ANALYTICS.PUBLIC.CUSTOMERS, with a calculated Value Band column
  *   that reads [Total Sales]) and Metrics (a measure table with no database
  *   source; Sales per Customer reads [Total Sales] and [Customer Count]).
- *   Sales Performance, Customer Insights and Executive Summary are bound to it.
+ *   Sales Performance, Customer Insights and Executive Summary are connected to it.
  *   Executive Summary has no visual evidence at all — only measure-source-lineage
  *   rows, which list model measures whether or not a visual shows them — so it
  *   must never count as using anything.
  * - Marketing holds Marketing Model, whose tables are Campaigns
  *   (ANALYTICS.PUBLIC.CAMPAIGNS) and Attributed Sales — also sourced from
  *   ANALYTICS.PUBLIC.SALES, so that database table sits behind two semantic
- *   tables in two models. Campaign Tracker is bound to it.
+ *   tables in two models. Campaign Tracker is connected to it.
  * Inventory: 5 semantic tables, 3 database tables, 7 measures.
+ *
+ * Headers, values, and file names follow Docs/07-column-naming-standard.md:
+ * copies and exports use the on-screen headers, context columns come first
+ * (left out when the grid already has a column of that name), and every
+ * "… ID" column comes last.
  */
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const workspaceId2 = "44444444-4444-4444-8444-444444444444";
@@ -28,10 +33,18 @@ const modelId = "33333333-3333-4333-8333-333333333333";
 const modelId2 = "55555555-5555-4555-8555-555555555555";
 const salesModelKey = `${workspaceId}:${modelId}`;
 
-const semanticGroupName = /^Semantic model tables \(\d+\)$/;
+const tablesPlaceholder = "Search semantic tables or database tables...";
+const semanticGroupName = /^Semantic tables \(\d+\)$/;
 const databaseGroupName = /^Database tables \(\d+\)$/;
-const estateFailedBand = "Estate discovery is unavailable for this identity. Report and visual usage cannot be computed; the dependency results remain accurate.";
-const estateFailedGrid = "Usage is unavailable because estate discovery failed.";
+const reportListFailedBand = "The list of reports could not be loaded for your account. Report and visual usage cannot be shown; the dependency results remain accurate.";
+const reportListFailedGrid = "Report usage is not available because the list of reports could not be loaded.";
+
+const tableImpactHeaders = {
+  reports: ["Report name", "Workspace name", "Semantic model", "Selected tables", "How it is used", "Number of pages", "Number of visuals", "Objects used", "Report ID", "Semantic model ID"],
+  visuals: ["Visual name", "Visual type", "Page name", "Report name", "Workspace name", "How it is used", "Objects used", "Selected tables", "Report ID", "Visual ID"],
+  models: ["Semantic model", "Workspace name", "Selected tables", "Database tables", "Number of impacted measures", "Number of reports using it", "Number of connected reports", "Semantic model ID", "Workspace ID"],
+  measures: ["Measure name", "Semantic table", "Semantic model", "Workspace name", "Selected tables", "Dependency", "Steps away", "Referenced as", "Number of reports", "Number of visuals", "Semantic model ID"],
+};
 
 test.describe("table impact", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
@@ -56,18 +69,18 @@ test.describe("table impact", () => {
 
     const tablesButton = page.getByRole("button", { name: "Tables", exact: true });
     await expect(tablesButton).toHaveCount(1);
-    await expect(tablesButton).toContainText("Search semantic model or database tables...");
+    await expect(tablesButton).toContainText(tablesPlaceholder);
     await tablesButton.click();
     await expect(tablesButton).toHaveAttribute("aria-expanded", "true");
 
-    const search = page.getByPlaceholder("Search semantic model or database tables...");
+    const search = page.getByPlaceholder(tablesPlaceholder);
     await expect(search).toBeFocused();
     await expect(main.locator("input")).toHaveCount(1);
 
     // Two separated groups, side by side, each with its own count.
     const semanticGroup = page.getByRole("group", { name: semanticGroupName });
     const databaseGroup = page.getByRole("group", { name: databaseGroupName });
-    await expect(page.getByText("Semantic model tables (5)", { exact: true })).toBeVisible();
+    await expect(page.getByText("Semantic tables (5)", { exact: true })).toBeVisible();
     await expect(page.getByText("Database tables (3)", { exact: true })).toBeVisible();
     await expect(semanticGroup.getByRole("option")).toHaveText([/^Attributed Sales/, /^Campaigns/, /^Customers/, /^Metrics/, /^Sales/]);
     await expect(databaseGroup.getByRole("option")).toHaveText([/^ANALYTICS\.PUBLIC\.CAMPAIGNS/, /^ANALYTICS\.PUBLIC\.CUSTOMERS/, /^ANALYTICS\.PUBLIC\.SALES/]);
@@ -84,7 +97,7 @@ test.describe("table impact", () => {
 
     // Typing filters both groups at once; every whitespace-separated term must match.
     await search.fill("campaign");
-    await expect(page.getByText("Semantic model tables (1)", { exact: true })).toBeVisible();
+    await expect(page.getByText("Semantic tables (1)", { exact: true })).toBeVisible();
     await expect(page.getByText("Database tables (1)", { exact: true })).toBeVisible();
     await expect(semanticGroup.getByRole("option")).toHaveText([/^Campaigns/]);
     await expect(databaseGroup.getByRole("option")).toHaveText([/^ANALYTICS\.PUBLIC\.CAMPAIGNS/]);
@@ -96,7 +109,7 @@ test.describe("table impact", () => {
     // Results are ranked by relevance, not only alphabetically: the exact name comes first, then a
     // name segment match, then entries that matched only on their model, workspace, or source.
     await search.fill("sales");
-    await expect(page.getByText("Semantic model tables (4)", { exact: true })).toBeVisible();
+    await expect(page.getByText("Semantic tables (4)", { exact: true })).toBeVisible();
     await expect(semanticGroup.getByRole("option")).toHaveText([/^Sales/, /^Attributed Sales/, /^Customers/, /^Metrics/]);
     await expect(databaseGroup.getByRole("option")).toHaveText([/^ANALYTICS\.PUBLIC\.SALES/, /^ANALYTICS\.PUBLIC\.CUSTOMERS/]);
     await search.fill("customers");
@@ -104,7 +117,7 @@ test.describe("table impact", () => {
     await expect(databaseGroup.getByRole("option").first()).toContainText("ANALYTICS.PUBLIC.CUSTOMERS");
 
     await search.fill("no such table");
-    await expect(page.getByText("Semantic model tables (0)", { exact: true })).toBeVisible();
+    await expect(page.getByText("Semantic tables (0)", { exact: true })).toBeVisible();
     await expect(page.getByText("Database tables (0)", { exact: true })).toBeVisible();
     await expect(page.getByText("No matches.", { exact: true })).toHaveCount(2);
 
@@ -120,7 +133,7 @@ test.describe("table impact", () => {
 
     // A semantic chip names its model too ("Table (Model)"), so same-named tables stay distinct.
     const chips = page.getByRole("list", { name: "Selected tables" }).getByRole("listitem");
-    await expect(chips).toHaveText([/^Model\s*Customers \(Sales Model\)$/, /^Database\s*ANALYTICS\.PUBLIC\.SALES$/]);
+    await expect(chips).toHaveText([/^Semantic\s*Customers \(Sales Model\)$/, /^Database\s*ANALYTICS\.PUBLIC\.SALES$/]);
     await expect(page.getByRole("button", { name: "Remove Customers (Sales Model)", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Remove ANALYTICS.PUBLIC.SALES", exact: true })).toBeVisible();
 
@@ -129,13 +142,13 @@ test.describe("table impact", () => {
     await expect(tablesButton).toHaveAttribute("aria-expanded", "false");
 
     // The database table expands to both semantic tables behind it, in both models.
-    await expect(page.getByText("10 exact DAX relationships ready across 2 semantic models", { exact: true })).toBeVisible();
-    await expect(page.getByText("Visual usage checked across 4 bound reports.", { exact: true })).toBeVisible();
-    await expectTiles(page, { Reports: "3", Visuals: "5", "Semantic models": "2", Measures: "6" });
+    await expect(page.getByText("10 calculation links found in 2 semantic models", { exact: true })).toBeVisible();
+    await expect(page.getByText("Checked the visuals in 4 connected reports.", { exact: true })).toBeVisible();
+    await expectTiles(page, { Reports: "3", Visuals: "5", "Semantic models": "2", "Impacted measures": "6" });
     await expect(summaryTile(page, "Semantic models")).toContainText("3 semantic tables selected");
 
     // The impact graph spans both models, drawn like the table lineage diagram: reports start collapsed.
-    await expect(page.getByRole("heading", { name: "Impact of 3 tables" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Impact of 3 semantic tables" })).toBeVisible();
     await expect(page.getByText("23 nodes · 34 links", { exact: true })).toBeVisible();
     await expect(page.locator(".react-flow__node").first()).toBeVisible();
     await expect(page.locator(".react-flow__node")).toHaveCount(23);
@@ -152,82 +165,85 @@ test.describe("table impact", () => {
     const visuals = impactSection(page, "Visuals using the selected tables");
     const models = impactSection(page, "Semantic models");
     const measures = impactSection(page, "Measures using the selected tables");
+    // On-screen headers are the standard names in sentence case, the same words the copies and exports
+    // below use. (AG Grid leaves columns scrolled out of view out of the DOM, so only the first few are read here.)
+    const leadingHeaders = [[reports, tableImpactHeaders.reports], [visuals, tableImpactHeaders.visuals], [models, tableImpactHeaders.models], [measures, tableImpactHeaders.measures]] as const;
+    for (const [section, headers] of leadingHeaders) {
+      for (const header of headers.slice(0, 3)) await expect(section.getByRole("columnheader", { name: header, exact: true })).toBeVisible();
+    }
     await expect(reports.getByText("3 rows", { exact: true })).toBeVisible();
-    await expect(columnCells(reports, "Report")).toHaveText(["Campaign Tracker", "Customer Insights", "Sales Performance"]);
+    await expect(columnCells(reports, "Report name")).toHaveText(["Campaign Tracker", "Customer Insights", "Sales Performance"]);
     await expect(visuals.getByText("5 rows", { exact: true })).toBeVisible();
-    await expect(columnCells(visuals, "Visual")).toHaveText(["Attributed revenue card", "Active share card", "Sales per customer", "Amount by region", "Total sales card"]);
+    await expect(columnCells(visuals, "Visual name")).toHaveText(["Attributed revenue card", "Active share card", "Sales per customer", "Amount by region", "Total sales card"]);
     await expect(models.getByText("2 rows", { exact: true })).toBeVisible();
     await expect(columnCells(models, "Semantic model")).toHaveText(["Sales Model", "Marketing Model"]);
+    // A measure is named on its own, with its semantic table beside it, instead of Table[Measure].
     await expect(measures.getByText("6 rows", { exact: true })).toBeVisible();
-    await expect(columnCells(measures, "Measure")).toHaveText([
-      "Attributed Sales[Attributed Revenue]",
-      "Metrics[Customer Count]",
-      "Metrics[Sales per Customer]",
-      "Sales[KPI]",
-      "Sales[Total Sales]",
-      "Metrics[Active Share]",
-    ]);
+    await expect(columnCells(measures, "Measure name")).toHaveText(["Attributed Revenue", "Customer Count", "Sales per Customer", "KPI", "Total Sales", "Active Share"]);
+    await expect(columnCells(measures, "Semantic table")).toHaveText(["Attributed Sales", "Metrics", "Metrics", "Sales", "Sales", "Metrics"]);
 
-    // Every grid can be copied and downloaded, and each copy carries the full rows plus the selection.
+    // Every grid can be copied and downloaded, and each copy carries the full rows. Each grid already has a
+    // "Selected tables" column saying which pick led to that row, so the selection is not repeated as context.
     for (const section of [reports, visuals, models, measures]) {
       for (const name of ["Copy table", "CSV", "Excel"]) await expect(section.getByRole("button", { name, exact: true })).toBeEnabled();
     }
-    const selection = "Customers (Sales Model); ANALYTICS.PUBLIC.SALES";
     expect(await copyTable(page, reports)).toBe(tsv([
-      ["selected_tables", "Report", "Workspace", "Semantic model", "Selected tables", "Usage", "Pages", "Visuals", "Objects used", "Report ID", "Semantic model ID"],
-      [selection, "Campaign Tracker", "Marketing", "Marketing Model", "ANALYTICS.PUBLIC.SALES", "Reads table fields", "1", "1", "Attributed Sales[Attributed Revenue]", reportId3, modelId2],
-      [selection, "Customer Insights", "Finance", "Sales Model", "Customers (Sales Model), ANALYTICS.PUBLIC.SALES", "Through measures", "1", "2", "Metrics[Active Share], Metrics[Sales per Customer]", reportId2, modelId],
-      [selection, "Sales Performance", "Finance", "Sales Model", "ANALYTICS.PUBLIC.SALES", "Reads table fields", "1", "2", "Sales[Amount], Sales[Total Sales]", reportId, modelId],
+      tableImpactHeaders.reports,
+      ["Campaign Tracker", "Marketing", "Marketing Model", "ANALYTICS.PUBLIC.SALES", "Uses it directly", "1", "1", "Attributed Sales[Attributed Revenue]", reportId3, modelId2],
+      ["Customer Insights", "Finance", "Sales Model", "Customers (Sales Model), ANALYTICS.PUBLIC.SALES", "Through a measure", "1", "2", "Metrics[Active Share], Metrics[Sales per Customer]", reportId2, modelId],
+      ["Sales Performance", "Finance", "Sales Model", "ANALYTICS.PUBLIC.SALES", "Uses it directly", "1", "2", "Sales[Amount], Sales[Total Sales]", reportId, modelId],
     ]));
     expect(await copyTable(page, visuals)).toBe(tsv([
-      ["selected_tables", "Visual", "Visual type", "Page", "Report", "Workspace", "Usage", "Fields used", "Selected tables", "Report ID", "Visual key"],
-      [selection, "Attributed revenue card", "card", "Spend", "Campaign Tracker", "Marketing", "Reads table fields", "Attributed Sales[Attributed Revenue]", "ANALYTICS.PUBLIC.SALES", reportId3, `${reportId3}:spend:revenue-card`],
-      [selection, "Active share card", "card", "Regions", "Customer Insights", "Finance", "Through measures", "Metrics[Active Share]", "Customers (Sales Model)", reportId2, `${reportId2}:regions:share-card`],
-      [selection, "Sales per customer", "card", "Regions", "Customer Insights", "Finance", "Through measures", "Metrics[Sales per Customer]", "Customers (Sales Model), ANALYTICS.PUBLIC.SALES", reportId2, `${reportId2}:regions:spc-card`],
-      [selection, "Amount by region", "tableEx", "Overview", "Sales Performance", "Finance", "Reads table fields", "Sales[Amount]", "ANALYTICS.PUBLIC.SALES", reportId, `${reportId}:overview:amount-table`],
-      [selection, "Total sales card", "card", "Overview", "Sales Performance", "Finance", "Reads table fields", "Sales[Total Sales]", "ANALYTICS.PUBLIC.SALES", reportId, `${reportId}:overview:sales-card`],
+      tableImpactHeaders.visuals,
+      ["Attributed revenue card", "card", "Spend", "Campaign Tracker", "Marketing", "Uses it directly", "Attributed Sales[Attributed Revenue]", "ANALYTICS.PUBLIC.SALES", reportId3, `${reportId3}:spend:revenue-card`],
+      ["Active share card", "card", "Regions", "Customer Insights", "Finance", "Through a measure", "Metrics[Active Share]", "Customers (Sales Model)", reportId2, `${reportId2}:regions:share-card`],
+      ["Sales per customer", "card", "Regions", "Customer Insights", "Finance", "Through a measure", "Metrics[Sales per Customer]", "Customers (Sales Model), ANALYTICS.PUBLIC.SALES", reportId2, `${reportId2}:regions:spc-card`],
+      ["Amount by region", "tableEx", "Overview", "Sales Performance", "Finance", "Uses it directly", "Sales[Amount]", "ANALYTICS.PUBLIC.SALES", reportId, `${reportId}:overview:amount-table`],
+      ["Total sales card", "card", "Overview", "Sales Performance", "Finance", "Uses it directly", "Sales[Total Sales]", "ANALYTICS.PUBLIC.SALES", reportId, `${reportId}:overview:sales-card`],
     ]));
     expect(await copyTable(page, models)).toBe(tsv([
-      ["selected_tables", "Semantic model", "Workspace", "Selected tables", "Database tables", "Measures", "Reports using", "Reports bound", "Semantic model ID", "Workspace ID"],
-      [selection, "Sales Model", "Finance", "Customers, Sales", "ANALYTICS.PUBLIC.CUSTOMERS, ANALYTICS.PUBLIC.SALES", "5", "2", "3", modelId, workspaceId],
-      [selection, "Marketing Model", "Marketing", "Attributed Sales", "ANALYTICS.PUBLIC.SALES", "1", "1", "1", modelId2, workspaceId2],
+      tableImpactHeaders.models,
+      ["Sales Model", "Finance", "Customers, Sales", "ANALYTICS.PUBLIC.CUSTOMERS, ANALYTICS.PUBLIC.SALES", "5", "2", "3", modelId, workspaceId],
+      ["Marketing Model", "Marketing", "Attributed Sales", "ANALYTICS.PUBLIC.SALES", "1", "1", "1", modelId2, workspaceId2],
     ]));
     expect(await copyTable(page, measures)).toBe(tsv([
-      ["selected_tables", "Measure", "Semantic model", "Workspace", "Selected tables", "Relationship", "Depth", "DAX reference", "Reports", "Visuals", "Semantic model ID"],
-      [selection, "Attributed Sales[Attributed Revenue]", "Marketing Model", "Marketing", "ANALYTICS.PUBLIC.SALES", "Direct", "1", "Attributed Sales[Revenue]", "1", "1", modelId2],
-      [selection, "Metrics[Customer Count]", "Sales Model", "Finance", "Customers (Sales Model)", "Direct", "1", "Customers[Customer ID]", "0", "0", modelId],
-      [selection, "Metrics[Sales per Customer]", "Sales Model", "Finance", "Customers (Sales Model), ANALYTICS.PUBLIC.SALES", "Direct", "1", "[Total Sales]", "1", "1", modelId],
-      [selection, "Sales[KPI]", "Sales Model", "Finance", "ANALYTICS.PUBLIC.SALES", "Direct", "1", "[Total Sales]", "0", "0", modelId],
-      [selection, "Sales[Total Sales]", "Sales Model", "Finance", "ANALYTICS.PUBLIC.SALES", "Direct", "1", "Sales[Amount]", "1", "1", modelId],
-      [selection, "Metrics[Active Share]", "Sales Model", "Finance", "Customers (Sales Model)", "Transitive", "2", "[Customer Count]", "1", "1", modelId],
+      tableImpactHeaders.measures,
+      ["Attributed Revenue", "Attributed Sales", "Marketing Model", "Marketing", "ANALYTICS.PUBLIC.SALES", "Direct", "1", "Attributed Sales[Revenue]", "1", "1", modelId2],
+      ["Customer Count", "Metrics", "Sales Model", "Finance", "Customers (Sales Model)", "Direct", "1", "Customers[Customer ID]", "0", "0", modelId],
+      ["Sales per Customer", "Metrics", "Sales Model", "Finance", "Customers (Sales Model), ANALYTICS.PUBLIC.SALES", "Direct", "1", "[Total Sales]", "1", "1", modelId],
+      ["KPI", "Sales", "Sales Model", "Finance", "ANALYTICS.PUBLIC.SALES", "Direct", "1", "[Total Sales]", "0", "0", modelId],
+      ["Total Sales", "Sales", "Sales Model", "Finance", "ANALYTICS.PUBLIC.SALES", "Direct", "1", "Sales[Amount]", "1", "1", modelId],
+      ["Active Share", "Metrics", "Sales Model", "Finance", "Customers (Sales Model)", "Indirect", "2", "[Customer Count]", "1", "1", modelId],
     ]));
 
     // A single cell copies just its value.
-    const firstReportCell = columnCells(reports, "Report").first();
+    const firstReportCell = columnCells(reports, "Report name").first();
     await firstReportCell.hover();
     await firstReportCell.getByRole("button", { name: "Copy cell value" }).click();
     await expect.poll(() => lastCopied(page)).toBe("Campaign Tracker");
 
+    // Files are named table-impact-<table>-<grid>; with several tables picked the subject is "multiple-tables".
     const csvDownload = page.waitForEvent("download");
     await reports.getByRole("button", { name: "CSV", exact: true }).click();
     const csv = await csvDownload;
-    expect(csv.suggestedFilename()).toBe("table-impact-reports.csv");
+    expect(csv.suggestedFilename()).toBe("table-impact-multiple-tables-reports.csv");
     const csvText = readFileSync((await csv.path())!, "utf8");
-    expect(csvText.startsWith("﻿selected_tables,Report,Workspace,Semantic model,Selected tables,Usage,Pages,Visuals,Objects used,Report ID,Semantic model ID\r\n")).toBe(true);
-    expect(csvText).toContain(`"${selection}","Sales Performance","Finance","Sales Model","ANALYTICS.PUBLIC.SALES","Reads table fields","1","2","Sales[Amount], Sales[Total Sales]","${reportId}","${modelId}"`);
+    expect(csvText.startsWith(`﻿${tableImpactHeaders.reports.map((header) => `"${header}"`).join(",")}\r\n`)).toBe(true);
+    expect(csvText).toContain(`"Sales Performance","Finance","Sales Model","ANALYTICS.PUBLIC.SALES","Uses it directly","1","2","Sales[Amount], Sales[Total Sales]","${reportId}","${modelId}"`);
     expect(csvText).not.toContain("Executive Summary");
+    expect(csvText).not.toContain("parent_");
 
     const visualsDownload = page.waitForEvent("download");
     await visuals.getByRole("button", { name: "CSV", exact: true }).click();
-    expect((await visualsDownload).suggestedFilename()).toBe("table-impact-visuals.csv");
+    expect((await visualsDownload).suggestedFilename()).toBe("table-impact-multiple-tables-visuals.csv");
 
     const excelDownload = page.waitForEvent("download");
     await measures.getByRole("button", { name: "Excel", exact: true }).click();
     const excel = await excelDownload;
-    expect(excel.suggestedFilename()).toBe("table-impact-measures.xls");
+    expect(excel.suggestedFilename()).toBe("table-impact-multiple-tables-measures.xls");
     const excelText = readFileSync((await excel.path())!, "utf8");
-    expect(excelText).toContain("<th>Measure</th><th>Semantic model</th>");
-    expect(excelText).toContain("<td>Metrics[Active Share]</td><td>Sales Model</td><td>Finance</td><td>Customers (Sales Model)</td><td>Transitive</td><td>2</td>");
+    expect(excelText).toContain("<th>Measure name</th><th>Semantic table</th><th>Semantic model</th>");
+    expect(excelText).toContain("<td>Active Share</td><td>Metrics</td><td>Sales Model</td><td>Finance</td><td>Customers (Sales Model)</td><td>Indirect</td><td>2</td>");
 
     await page.screenshot({ path: "test-results/table-impact.png", fullPage: true });
 
@@ -235,17 +251,21 @@ test.describe("table impact", () => {
     await page.getByRole("button", { name: "Remove Customers (Sales Model)", exact: true }).click();
     await expect(chips).toHaveText([/^Database\s*ANALYTICS\.PUBLIC\.SALES$/]);
     await expect(tablesButton).toContainText("1 selected");
-    await expectTiles(page, { Reports: "3", Visuals: "4", "Semantic models": "2", Measures: "4" });
+    await expectTiles(page, { Reports: "3", Visuals: "4", "Semantic models": "2", "Impacted measures": "4" });
     await expect(summaryTile(page, "Semantic models")).toContainText("2 semantic tables selected");
-    await expect(columnCells(reports, "Report")).toHaveText(["Campaign Tracker", "Customer Insights", "Sales Performance"]);
-    await expect(columnCells(visuals, "Visual")).toHaveText(["Attributed revenue card", "Sales per customer", "Amount by region", "Total sales card"]);
+    await expect(columnCells(reports, "Report name")).toHaveText(["Campaign Tracker", "Customer Insights", "Sales Performance"]);
+    await expect(columnCells(visuals, "Visual name")).toHaveText(["Attributed revenue card", "Sales per customer", "Amount by region", "Total sales card"]);
     await expect(columnCells(models, "Semantic model")).toHaveText(["Sales Model", "Marketing Model"]);
-    await expect(columnCells(measures, "Measure")).toHaveText(["Attributed Sales[Attributed Revenue]", "Metrics[Sales per Customer]", "Sales[KPI]", "Sales[Total Sales]"]);
+    await expect(columnCells(measures, "Measure name")).toHaveText(["Attributed Revenue", "Sales per Customer", "KPI", "Total Sales"]);
     expect(await copyTable(page, models)).toBe(tsv([
-      ["selected_tables", "Semantic model", "Workspace", "Selected tables", "Database tables", "Measures", "Reports using", "Reports bound", "Semantic model ID", "Workspace ID"],
-      ["ANALYTICS.PUBLIC.SALES", "Sales Model", "Finance", "Sales", "ANALYTICS.PUBLIC.SALES", "3", "2", "3", modelId, workspaceId],
-      ["ANALYTICS.PUBLIC.SALES", "Marketing Model", "Marketing", "Attributed Sales", "ANALYTICS.PUBLIC.SALES", "1", "1", "1", modelId2, workspaceId2],
+      tableImpactHeaders.models,
+      ["Sales Model", "Finance", "Sales", "ANALYTICS.PUBLIC.SALES", "3", "2", "3", modelId, workspaceId],
+      ["Marketing Model", "Marketing", "Attributed Sales", "ANALYTICS.PUBLIC.SALES", "1", "1", "1", modelId2, workspaceId2],
     ]));
+    // One database table picked: the files are named after it.
+    const singleDownload = page.waitForEvent("download");
+    await models.getByRole("button", { name: "CSV", exact: true }).click();
+    expect((await singleDownload).suggestedFilename()).toBe("table-impact-analytics-public-sales-semantic-models.csv");
 
     // Clear empties the selection.
     await tablesButton.click();
@@ -257,13 +277,13 @@ test.describe("table impact", () => {
     await search.fill("customers");
     await option(semanticGroup, "Customers").click();
     await page.getByRole("button", { name: "Done", exact: true }).click();
-    await expect(page.getByText("9 exact DAX relationships ready across 1 semantic model", { exact: true })).toBeVisible();
-    await expect(page.getByText("Visual usage checked across 3 bound reports.", { exact: true })).toBeVisible();
-    await expectTiles(page, { Reports: "1", Visuals: "2", "Semantic models": "1", Measures: "3" });
+    await expect(page.getByText("9 calculation links found in 1 semantic model", { exact: true })).toBeVisible();
+    await expect(page.getByText("Checked the visuals in 3 connected reports.", { exact: true })).toBeVisible();
+    await expectTiles(page, { Reports: "1", Visuals: "2", "Semantic models": "1", "Impacted measures": "3" });
     await expect(reports.getByText("1 row", { exact: true })).toBeVisible();
-    await expect(columnCells(reports, "Report")).toHaveText(["Customer Insights"]);
-    await expect(columnCells(visuals, "Visual")).toHaveText(["Active share card", "Sales per customer"]);
-    await expect(columnCells(measures, "Measure")).toHaveText(["Metrics[Customer Count]", "Metrics[Active Share]", "Metrics[Sales per Customer]"]);
+    await expect(columnCells(reports, "Report name")).toHaveText(["Customer Insights"]);
+    await expect(columnCells(visuals, "Visual name")).toHaveText(["Active share card", "Sales per customer"]);
+    await expect(columnCells(measures, "Measure name")).toHaveText(["Customer Count", "Active Share", "Sales per Customer"]);
     await expect(page.getByRole("button", { name: "Ask Power AI" })).toBeVisible();
 
     await expect(page.getByRole("heading", { name: "Customers impact" })).toBeVisible();
@@ -303,7 +323,7 @@ test.describe("table impact", () => {
     expect(browserErrors).toEqual([]);
   });
 
-  test("while estate discovery is still loading, usage shows as pending rather than as no reports", async ({ page }) => {
+  test("while the list of reports is still loading, usage shows as pending rather than as no reports", async ({ page }) => {
     const browserErrors = collectBrowserErrors(page);
     const backend = await mockBackend(page, { holdEstate: true });
 
@@ -312,34 +332,34 @@ test.describe("table impact", () => {
     await expect(page.getByText("5 semantic tables and 3 database tables indexed across 2 workspaces.", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Tables", exact: true }).click();
-    await page.getByPlaceholder("Search semantic model or database tables...").fill("customers");
+    await page.getByPlaceholder(tablesPlaceholder).fill("customers");
     await option(page.getByRole("group", { name: semanticGroupName }), "Customers").click();
     await page.getByRole("button", { name: "Done", exact: true }).click();
 
     const reports = impactSection(page, "Reports using the selected tables");
     const visuals = impactSection(page, "Visuals using the selected tables");
     const measures = impactSection(page, "Measures using the selected tables");
-    await expect(page.getByText("Finding the reports bound to these semantic models...", { exact: true })).toBeVisible();
-    await expect(page.getByText("No reports in the accessible estate are bound to the semantic models holding these tables.")).toHaveCount(0);
+    await expect(page.getByText("Finding the reports connected to these semantic models...", { exact: true })).toBeVisible();
+    await expect(page.getByText("No report you can open is connected to the semantic models holding these tables.")).toHaveCount(0);
     await expect(summaryTile(page, "Reports").getByLabel("Still checking")).toBeVisible();
     await expect(summaryTile(page, "Visuals").getByLabel("Still checking")).toBeVisible();
     await expect(reports.getByText("Checking reports...")).toBeVisible();
     await expect(visuals.getByText("Checking reports...")).toBeVisible();
-    // Dependencies do not wait for the estate.
+    // Dependencies do not wait for the list of reports.
     await expect(measures.getByText("3 rows", { exact: true })).toBeVisible();
-    await expect(page.getByText("9 exact DAX relationships ready across 1 semantic model", { exact: true })).toBeVisible();
+    await expect(page.getByText("9 calculation links found in 1 semantic model", { exact: true })).toBeVisible();
 
     backend.releaseEstate();
-    await expect(page.getByText("Finding the reports bound to these semantic models...", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Visual usage checked across 3 bound reports.", { exact: true })).toBeVisible();
-    await expectTiles(page, { Reports: "1", Visuals: "2", "Semantic models": "1", Measures: "3" });
-    await expect(columnCells(reports, "Report")).toHaveText(["Customer Insights"]);
+    await expect(page.getByText("Finding the reports connected to these semantic models...", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Checked the visuals in 3 connected reports.", { exact: true })).toBeVisible();
+    await expectTiles(page, { Reports: "1", Visuals: "2", "Semantic models": "1", "Impacted measures": "3" });
+    await expect(columnCells(reports, "Report name")).toHaveText(["Customer Insights"]);
     await expect(reports.getByText("Checking reports...")).toHaveCount(0);
     expect(backend.unhandled).toEqual([]);
     expect(browserErrors).toEqual([]);
   });
 
-  test("when estate discovery fails, measures and semantic models still show with a warning", async ({ page }) => {
+  test("when the list of reports fails, measures and semantic models still show with a warning", async ({ page }) => {
     const browserErrors = collectBrowserErrors(page);
     await mockBackend(page, { estateStatus: 403 });
 
@@ -348,14 +368,14 @@ test.describe("table impact", () => {
     await expect(page.getByText("5 semantic tables and 3 database tables indexed across 2 workspaces.", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Tables", exact: true }).click();
-    await page.getByPlaceholder("Search semantic model or database tables...").fill("customers");
+    await page.getByPlaceholder(tablesPlaceholder).fill("customers");
     await option(page.getByRole("group", { name: databaseGroupName }), "ANALYTICS.PUBLIC.CUSTOMERS").click();
     await page.getByRole("button", { name: "Done", exact: true }).click();
     await expect(page.getByRole("list", { name: "Selected tables" }).getByRole("listitem")).toHaveText([/^Database\s*ANALYTICS\.PUBLIC\.CUSTOMERS$/]);
 
-    await expect(page.getByText(estateFailedBand, { exact: true })).toBeVisible();
-    await expect(page.getByText("9 exact DAX relationships ready across 1 semantic model", { exact: true })).toBeVisible();
-    await expectTiles(page, { Reports: "0", Visuals: "0", "Semantic models": "1", Measures: "3" });
+    await expect(page.getByText(reportListFailedBand, { exact: true })).toBeVisible();
+    await expect(page.getByText("9 calculation links found in 1 semantic model", { exact: true })).toBeVisible();
+    await expectTiles(page, { Reports: "0", Visuals: "0", "Semantic models": "1", "Impacted measures": "3" });
 
     const reports = impactSection(page, "Reports using the selected tables");
     const visuals = impactSection(page, "Visuals using the selected tables");
@@ -364,13 +384,13 @@ test.describe("table impact", () => {
     await expect(reports.getByText("0 rows", { exact: true })).toBeVisible();
     await expect(reports.getByRole("button", { name: "Copy table", exact: true })).toBeDisabled();
     // The empty usage grids say why they are empty, rather than still claiming to check.
-    await expect(reports.getByText(estateFailedGrid, { exact: true })).toBeVisible();
+    await expect(reports.getByText(reportListFailedGrid, { exact: true })).toBeVisible();
     await expect(reports.getByText("Checking reports...")).toHaveCount(0);
     await expect(visuals.getByText("0 rows", { exact: true })).toBeVisible();
-    await expect(visuals.getByText(estateFailedGrid, { exact: true })).toBeVisible();
+    await expect(visuals.getByText(reportListFailedGrid, { exact: true })).toBeVisible();
 
     await expect(measures.getByText("3 rows", { exact: true })).toBeVisible();
-    await expect(columnCells(measures, "Measure")).toHaveText(["Metrics[Customer Count]", "Metrics[Active Share]", "Metrics[Sales per Customer]"]);
+    await expect(columnCells(measures, "Measure name")).toHaveText(["Customer Count", "Active Share", "Sales per Customer"]);
     await expect(measures.getByRole("button", { name: "Copy table", exact: true })).toBeEnabled();
     await expect(models.getByText("1 row", { exact: true })).toBeVisible();
     await expect(columnCells(models, "Semantic model")).toHaveText(["Sales Model"]);
@@ -387,7 +407,7 @@ test.describe("table impact", () => {
 test.describe("measure impact", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("a measure shows the tables, impacted measures, semantic model, reports, and visuals it touches", async ({ page }) => {
+  test("a measure shows the semantic tables, impacted measures, semantic model, reports, and visuals it touches", async ({ page }) => {
     const browserErrors = collectBrowserErrors(page);
     await recordClipboard(page);
     const backend = await mockBackend(page);
@@ -397,19 +417,22 @@ test.describe("measure impact", () => {
     await expect(page.getByRole("button", { name: "Workspace scope", exact: true })).toHaveText("All 2 workspaces");
     await expect(page.getByText("7 measures indexed across 2 workspaces.", { exact: true })).toBeVisible();
 
+    // Entries read "Total Sales", then "Sales · Sales Model · Finance": the measure name first, then where it lives.
     const measureButton = page.getByRole("button", { name: "Measure", exact: true });
     await measureButton.click();
     await page.getByPlaceholder("Search a measure by name...").fill("Total Sales");
-    await page.getByRole("option", { name: "Total Sales" }).click();
-    await expect(measureButton).toHaveText("Sales[Total Sales]");
+    const totalSalesOption = page.getByRole("option", { name: "Total Sales" });
+    await expect(totalSalesOption).toContainText("Sales · Sales Model · Finance");
+    await totalSalesOption.click();
+    await expect(measureButton).toHaveText("Total Sales");
 
-    await expect(page.getByText("9 exact DAX relationships ready", { exact: true })).toBeVisible();
-    await expect(page.getByText("Visual usage checked across 3 bound reports.", { exact: true })).toBeVisible();
-    await expectTiles(page, { Tables: "3", "Measures impacted": "2", "Semantic models": "1", Reports: "2", Visuals: "2" });
+    await expect(page.getByText("9 calculation links found", { exact: true })).toBeVisible();
+    await expect(page.getByText("Checked the visuals in 3 connected reports.", { exact: true })).toBeVisible();
+    await expectTiles(page, { "Semantic tables": "3", "Impacted measures": "2", "Semantic models": "1", Reports: "2", Visuals: "2" });
     await expect(summaryTile(page, "Semantic models")).toContainText("Sales Model");
 
     // The graph is focused on the measure: its input above, dependents and reports below, reports collapsed.
-    await expect(page.getByRole("heading", { name: "Sales[Total Sales] impact" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Total Sales impact" })).toBeVisible();
     await expect(page.getByText(/^13 nodes · \d+ links$/)).toBeVisible();
     await expect(page.locator(".react-flow__node")).toHaveCount(13);
     // Only the measure and its dependents lead to reports. Soft, so every check below still runs: this
@@ -437,8 +460,8 @@ test.describe("measure impact", () => {
     await expect.soft(graphNode(page, `visual|${reportId}:overview:amount-table`), "a visual reading only an input is not drawn as impacted").toHaveCount(0, { timeout: 5_000 });
     await expect.soft(page.getByText("14 nodes · 17 links", { exact: true })).toBeVisible({ timeout: 5_000 });
 
-    const measureLabel = "Sales[Total Sales]";
-    const tables = impactSection(page, "Tables");
+    const measureLabel = "Total Sales";
+    const tables = impactSection(page, "Semantic tables");
     const impacted = impactSection(page, `Measures impacted by ${measureLabel}`);
     const model = impactSection(page, "Semantic model");
     const reports = impactSection(page, "Reports");
@@ -446,64 +469,67 @@ test.describe("measure impact", () => {
     const inputs = impactSection(page, `Inputs ${measureLabel} reads`);
 
     await expect(tables.getByText("3 rows", { exact: true })).toBeVisible();
-    await expect(columnCells(tables, "Table")).toHaveText(["Sales", "Metrics", "Customers"]);
+    await expect(columnCells(tables, "Semantic table")).toHaveText(["Sales", "Metrics", "Customers"]);
     await expect(impacted.getByText("2 rows", { exact: true })).toBeVisible();
-    await expect(columnCells(impacted, "Measure")).toHaveText(["Metrics[Sales per Customer]", "Sales[KPI]"]);
+    await expect(columnCells(impacted, "Measure name")).toHaveText(["Sales per Customer", "KPI"]);
+    await expect(columnCells(impacted, "Semantic table")).toHaveText(["Metrics", "Sales"]);
     await expect(model.getByText("1 row", { exact: true })).toBeVisible();
     await expect(columnCells(model, "Semantic model")).toHaveText(["Sales Model"]);
     // Executive Summary lists Total Sales only in measure-source-lineage, which is not visual evidence.
     await expect(reports.getByText("2 rows", { exact: true })).toBeVisible();
-    await expect(columnCells(reports, "Report")).toHaveText(["Customer Insights", "Sales Performance"]);
+    await expect(columnCells(reports, "Report name")).toHaveText(["Customer Insights", "Sales Performance"]);
     await expect(visuals.getByText("2 rows", { exact: true })).toBeVisible();
-    await expect(columnCells(visuals, "Visual")).toHaveText(["Sales per customer", "Total sales card"]);
+    await expect(columnCells(visuals, "Visual name")).toHaveText(["Sales per customer", "Total sales card"]);
     await expect(inputs.getByText("1 row", { exact: true })).toBeVisible();
-    await expect(columnCells(inputs, "Object")).toHaveText(["Sales[Amount]"]);
+    await expect(columnCells(inputs, "Object name")).toHaveText(["Amount"]);
 
     for (const section of [tables, impacted, model, reports, visuals, inputs]) {
       for (const name of ["Copy table", "CSV", "Excel"]) await expect(section.getByRole("button", { name, exact: true })).toBeEnabled();
     }
 
-    const context = ["Finance", workspaceId, "Sales Model", modelId, measureLabel];
-    const contextHeader = ["parent_workspace_name", "parent_workspace_id", "parent_semantic_model_name", "parent_semantic_model_id", "parent_measure"];
+    // Context columns (workspace, semantic model, the selected measure) come first unless the grid already
+    // has that column, and every "… ID" comes last. Report and visual files carry each report's own
+    // workspace in the grid, so the measure's workspace is not added to them as context.
     expect(await copyTable(page, tables)).toBe(tsv([
-      [...contextHeader, "Table", "Relationship", "Objects", "Database tables", "Semantic model", "Workspace"],
-      [...context, "Sales", "Home table, Read by the measure, Holds impacted measures", "Sales[Total Sales], Sales[Amount], Sales[KPI]", "ANALYTICS.PUBLIC.SALES", "Sales Model", "Finance"],
-      [...context, "Metrics", "Holds impacted measures", "Metrics[Sales per Customer]", "Not reported", "Sales Model", "Finance"],
-      [...context, "Customers", "Holds impacted calculations", "Customers[Value Band]", "ANALYTICS.PUBLIC.CUSTOMERS", "Sales Model", "Finance"],
+      ["Selected measure", "Semantic table", "Connection to the measure", "Objects involved", "Database tables", "Semantic model", "Workspace name", "Workspace ID", "Semantic model ID"],
+      [measureLabel, "Sales", "Holds the measure, Read by the measure, Holds impacted measures", "Sales[Total Sales], Sales[Amount], Sales[KPI]", "ANALYTICS.PUBLIC.SALES", "Sales Model", "Finance", workspaceId, modelId],
+      [measureLabel, "Metrics", "Holds impacted measures", "Metrics[Sales per Customer]", "Not available", "Sales Model", "Finance", workspaceId, modelId],
+      [measureLabel, "Customers", "Holds impacted calculations", "Customers[Value Band]", "ANALYTICS.PUBLIC.CUSTOMERS", "Sales Model", "Finance", workspaceId, modelId],
     ]));
     expect(await copyTable(page, impacted)).toBe(tsv([
-      [...contextHeader, "Measure", "Relationship", "Depth", "DAX reference", "Reports", "Visuals"],
-      [...context, "Metrics[Sales per Customer]", "Direct", "1", "[Total Sales]", "1", "1"],
-      [...context, "Sales[KPI]", "Direct", "1", "[Total Sales]", "0", "0"],
+      ["Workspace name", "Semantic model", "Selected measure", "Measure name", "Semantic table", "Dependency", "Steps away", "Referenced as", "Number of reports", "Number of visuals", "Workspace ID", "Semantic model ID"],
+      ["Finance", "Sales Model", measureLabel, "Sales per Customer", "Metrics", "Direct", "1", "[Total Sales]", "1", "1", workspaceId, modelId],
+      ["Finance", "Sales Model", measureLabel, "KPI", "Sales", "Direct", "1", "[Total Sales]", "0", "0", workspaceId, modelId],
     ]));
     expect(await copyTable(page, model)).toBe(tsv([
-      [...contextHeader, "Semantic model", "Workspace", "Home table", "Measures impacted", "Calculated columns impacted", "Reports using", "Visuals using", "Reports bound", "Semantic model ID", "Workspace ID"],
-      [...context, "Sales Model", "Finance", "Sales", "2", "1", "2", "2", "3", modelId, workspaceId],
+      ["Selected measure", "Semantic model", "Workspace name", "Measure's semantic table", "Number of impacted measures", "Number of impacted calculated columns", "Number of reports using it", "Number of visuals using it", "Number of connected reports", "Semantic model ID", "Workspace ID"],
+      [measureLabel, "Sales Model", "Finance", "Sales", "2", "1", "2", "2", "3", modelId, workspaceId],
     ]));
     expect(await copyTable(page, reports)).toBe(tsv([
-      [...contextHeader, "Report", "Workspace", "Usage", "Pages", "Visuals", "Measures shown", "Report ID"],
-      [...context, "Customer Insights", "Finance", "Through impacted measures", "1", "1", "Metrics[Sales per Customer]", reportId2],
-      [...context, "Sales Performance", "Finance", "Shows the measure", "1", "1", "Sales[Total Sales]", reportId],
+      ["Semantic model", "Selected measure", "Report name", "Workspace name", "How it is used", "Number of pages", "Number of visuals", "Objects used", "Report ID", "Semantic model ID"],
+      ["Sales Model", measureLabel, "Customer Insights", "Finance", "Through a measure", "1", "1", "Metrics[Sales per Customer]", reportId2, modelId],
+      ["Sales Model", measureLabel, "Sales Performance", "Finance", "Uses it directly", "1", "1", "Sales[Total Sales]", reportId, modelId],
     ]));
     expect(await copyTable(page, visuals)).toBe(tsv([
-      [...contextHeader, "Visual", "Visual type", "Page", "Report", "Workspace", "Usage", "Fields used", "Report ID", "Visual key"],
-      [...context, "Sales per customer", "card", "Regions", "Customer Insights", "Finance", "Through impacted measures", "Metrics[Sales per Customer]", reportId2, `${reportId2}:regions:spc-card`],
-      [...context, "Total sales card", "card", "Overview", "Sales Performance", "Finance", "Shows the measure", "Sales[Total Sales]", reportId, `${reportId}:overview:sales-card`],
+      ["Semantic model", "Selected measure", "Visual name", "Visual type", "Page name", "Report name", "Workspace name", "How it is used", "Objects used", "Report ID", "Visual ID", "Semantic model ID"],
+      ["Sales Model", measureLabel, "Sales per customer", "card", "Regions", "Customer Insights", "Finance", "Through a measure", "Metrics[Sales per Customer]", reportId2, `${reportId2}:regions:spc-card`, modelId],
+      ["Sales Model", measureLabel, "Total sales card", "card", "Overview", "Sales Performance", "Finance", "Uses it directly", "Sales[Total Sales]", reportId, `${reportId}:overview:sales-card`, modelId],
     ]));
     expect(await copyTable(page, inputs)).toBe(tsv([
-      [...contextHeader, "Object", "Type", "Relationship", "Depth", "DAX reference", "Database table"],
-      [...context, "Sales[Amount]", "Column", "Direct", "1", "Sales[Amount]", "ANALYTICS.PUBLIC.SALES"],
+      ["Workspace name", "Semantic model", "Selected measure", "Object name", "Semantic table", "Object type", "Dependency", "Steps away", "Referenced as", "Database table", "Workspace ID", "Semantic model ID"],
+      ["Finance", "Sales Model", measureLabel, "Amount", "Sales", "Column", "Direct", "1", "Sales[Amount]", "ANALYTICS.PUBLIC.SALES", workspaceId, modelId],
     ]));
 
+    // Files are named measure-impact-<measure>-<grid>.
     const csvDownload = page.waitForEvent("download");
     await reports.getByRole("button", { name: "CSV", exact: true }).click();
     const csv = await csvDownload;
-    expect(csv.suggestedFilename()).toBe("sales-model-total-sales-reports.csv");
+    expect(csv.suggestedFilename()).toBe("measure-impact-total-sales-reports.csv");
     expect(readFileSync((await csv.path())!, "utf8")).not.toContain("Executive Summary");
     const excelDownload = page.waitForEvent("download");
     await tables.getByRole("button", { name: "Excel", exact: true }).click();
     const excel = await excelDownload;
-    expect(excel.suggestedFilename()).toBe("sales-model-total-sales-tables.xls");
+    expect(excel.suggestedFilename()).toBe("measure-impact-total-sales-semantic-tables.xls");
     expect(readFileSync((await excel.path())!, "utf8")).toContain("<td>Customers</td><td>Holds impacted calculations</td><td>Customers[Value Band]</td>");
 
     await page.screenshot({ path: "test-results/measure-impact.png", fullPage: true });
@@ -512,29 +538,29 @@ test.describe("measure impact", () => {
     await measureButton.click();
     await page.getByPlaceholder("Search a measure by name...").fill("ROI");
     await page.getByRole("option", { name: "ROI" }).click();
-    await expect(page.getByRole("heading", { name: "Campaigns[ROI] impact" })).toBeVisible();
-    await expect(page.getByText("1 exact DAX relationship ready", { exact: true })).toBeVisible();
-    await expect(page.getByText("Visual usage checked across 1 bound report.", { exact: true })).toBeVisible();
-    await expectTiles(page, { Tables: "1", "Measures impacted": "0", "Semantic models": "1", Reports: "0", Visuals: "0" });
+    await expect(page.getByRole("heading", { name: "ROI impact" })).toBeVisible();
+    await expect(page.getByText("1 calculation link found", { exact: true })).toBeVisible();
+    await expect(page.getByText("Checked the visuals in 1 connected report.", { exact: true })).toBeVisible();
+    await expectTiles(page, { "Semantic tables": "1", "Impacted measures": "0", "Semantic models": "1", Reports: "0", Visuals: "0" });
     await expect(page.getByText("4 nodes · 3 links", { exact: true })).toBeVisible();
     await expect(page.locator(".react-flow__node")).toHaveCount(4);
     await expect(graphLegend(page).getByRole("listitem")).toHaveText(["Database table", "Semantic model", "Semantic table", "Measure"]);
-    const roiTables = impactSection(page, "Tables");
-    await expect(columnCells(roiTables, "Table")).toHaveText(["Campaigns"]);
-    const roiImpacted = impactSection(page, "Measures impacted by Campaigns[ROI]");
+    const roiTables = impactSection(page, "Semantic tables");
+    await expect(columnCells(roiTables, "Semantic table")).toHaveText(["Campaigns"]);
+    const roiImpacted = impactSection(page, "Measures impacted by ROI");
     await expect(roiImpacted.getByText("0 rows", { exact: true })).toBeVisible();
     await expect(roiImpacted.getByText("No other measure depends on this measure.", { exact: true })).toBeVisible();
     await expect(roiImpacted.getByRole("button", { name: "Copy table", exact: true })).toBeDisabled();
     await expect(reports.getByText("0 rows", { exact: true })).toBeVisible();
     await expect(reports.getByText("No report visual shows this measure or anything depending on it.", { exact: true })).toBeVisible();
-    await expect(impactSection(page, "Inputs Campaigns[ROI] reads").getByText("This measure reads no other semantic objects.", { exact: true })).toBeVisible();
+    await expect(impactSection(page, "Inputs ROI reads").getByText("This measure reads no other semantic objects.", { exact: true })).toBeVisible();
 
     expect(backend.requests.filter((request) => request.includes("measure-source-lineage"))).toEqual([]);
     expect(backend.unhandled).toEqual([]);
     expect(browserErrors).toEqual([]);
   });
 
-  test("when estate discovery fails, only report and visual usage degrade", async ({ page }) => {
+  test("when the list of reports fails, only report and visual usage degrade", async ({ page }) => {
     const browserErrors = collectBrowserErrors(page);
     await recordClipboard(page);
     await mockBackend(page, { estateStatus: 403 });
@@ -547,26 +573,26 @@ test.describe("measure impact", () => {
     await page.getByPlaceholder("Search a measure by name...").fill("Total Sales");
     await page.getByRole("option", { name: "Total Sales" }).click();
 
-    await expect(page.getByText(estateFailedBand, { exact: true })).toBeVisible();
-    await expect(page.getByText("9 exact DAX relationships ready", { exact: true })).toBeVisible();
-    await expectTiles(page, { Tables: "3", "Measures impacted": "2", "Semantic models": "1", Reports: "0", Visuals: "0" });
+    await expect(page.getByText(reportListFailedBand, { exact: true })).toBeVisible();
+    await expect(page.getByText("9 calculation links found", { exact: true })).toBeVisible();
+    await expectTiles(page, { "Semantic tables": "3", "Impacted measures": "2", "Semantic models": "1", Reports: "0", Visuals: "0" });
 
     const reports = impactSection(page, "Reports");
     const visuals = impactSection(page, "Visuals");
     for (const section of [reports, visuals]) {
       await expect(section.getByText("0 rows", { exact: true })).toBeVisible();
-      await expect(section.getByText(estateFailedGrid, { exact: true })).toBeVisible();
+      await expect(section.getByText(reportListFailedGrid, { exact: true })).toBeVisible();
       await expect(section.getByText("Checking reports...")).toHaveCount(0);
       await expect(section.getByRole("button", { name: "Copy table", exact: true })).toBeDisabled();
     }
 
-    await expect(columnCells(impactSection(page, "Tables"), "Table")).toHaveText(["Sales", "Metrics", "Customers"]);
-    await expect(columnCells(impactSection(page, "Measures impacted by Sales[Total Sales]"), "Measure")).toHaveText(["Metrics[Sales per Customer]", "Sales[KPI]"]);
-    await expect(columnCells(impactSection(page, "Inputs Sales[Total Sales] reads"), "Object")).toHaveText(["Sales[Amount]"]);
+    await expect(columnCells(impactSection(page, "Semantic tables"), "Semantic table")).toHaveText(["Sales", "Metrics", "Customers"]);
+    await expect(columnCells(impactSection(page, "Measures impacted by Total Sales"), "Measure name")).toHaveText(["Sales per Customer", "KPI"]);
+    await expect(columnCells(impactSection(page, "Inputs Total Sales reads"), "Object name")).toHaveText(["Amount"]);
     const model = impactSection(page, "Semantic model");
     expect(await copyTable(page, model)).toBe(tsv([
-      ["parent_workspace_name", "parent_workspace_id", "parent_semantic_model_name", "parent_semantic_model_id", "parent_measure", "Semantic model", "Workspace", "Home table", "Measures impacted", "Calculated columns impacted", "Reports using", "Visuals using", "Reports bound", "Semantic model ID", "Workspace ID"],
-      ["Finance", workspaceId, "Sales Model", modelId, "Sales[Total Sales]", "Sales Model", "Finance", "Sales", "2", "1", "0", "0", "0", modelId, workspaceId],
+      ["Selected measure", "Semantic model", "Workspace name", "Measure's semantic table", "Number of impacted measures", "Number of impacted calculated columns", "Number of reports using it", "Number of visuals using it", "Number of connected reports", "Semantic model ID", "Workspace ID"],
+      ["Total Sales", "Sales Model", "Finance", "Sales", "2", "1", "0", "0", "0", modelId, workspaceId],
     ]));
 
     // The graph keeps the dependency chain and simply has no report or visual nodes.

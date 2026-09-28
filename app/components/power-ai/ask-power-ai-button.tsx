@@ -19,7 +19,7 @@ export function AskPowerAiButton({ context, question, label = "Ask Power AI" }: 
     <button
       type="button"
       onClick={open}
-      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-teal-200 bg-teal-50 px-2.5 text-xs font-medium text-teal-800 hover:bg-teal-100"
+      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 text-xs font-medium text-teal-800 transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:border-teal-300 hover:bg-teal-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/25 active:scale-[0.97]"
     >
       <Sparkles className="size-3.5" />
       {label}

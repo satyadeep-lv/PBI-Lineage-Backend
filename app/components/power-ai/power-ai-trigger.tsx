@@ -22,7 +22,7 @@ export function PowerAiTrigger({ onClick, className }: { onClick: () => void; cl
         onClick={onClick}
         aria-label={unlocked ? "Open Power AI" : "Power AI is locked"}
         title="Power AI"
-        className="relative flex items-center justify-center gap-2 rounded-full border border-fabric/60 bg-surface px-4 py-2.5 text-sm font-semibold text-fabric shadow-lg transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="relative flex items-center justify-center gap-2 rounded-full border border-fabric/60 bg-surface px-4 py-2.5 text-sm font-semibold text-fabric shadow-lg transition-[background-color,box-shadow,translate,scale] duration-300 ease-apple hover:-translate-y-0.5 hover:bg-accent hover:shadow-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/25 active:scale-[0.97]"
       >
         {unlocked ? <Sparkles className="size-4 shrink-0" /> : <Lock className="size-4 shrink-0" />}
         <span>Power AI</span>

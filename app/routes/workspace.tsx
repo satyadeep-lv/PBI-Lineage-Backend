@@ -146,7 +146,7 @@ export default function Workspace() {
                   onClick={toggleLeftCollapsed}
                   aria-label={leftCollapsed ? "Expand navigation" : "Collapse navigation"}
                   title={leftCollapsed ? "Expand navigation" : "Collapse navigation"}
-                  className="flex shrink-0 items-center justify-center gap-2 border-t border-sidebar-border bg-sidebar py-2.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  className="flex shrink-0 items-center justify-center gap-2 border-t border-sidebar-border bg-sidebar py-2.5 text-muted-foreground outline-none transition-colors duration-300 ease-apple hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:bg-sidebar-accent focus-visible:text-sidebar-accent-foreground"
                 >
                   {leftCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
                 </button>
@@ -168,6 +168,11 @@ export default function Workspace() {
             </div>
           )}
 
+          {/* Each workspace section eases in as it opens; API reference groups share one key so browsing them keeps its state. */}
+          <div
+            key={isDocumentation ? "documentation" : activeSection}
+            className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-500 motion-safe:ease-apple"
+          >
           {activeSection === "database" ? (
             <DatabaseSetup
               execute={apiExecutor.execute}
@@ -220,6 +225,7 @@ export default function Workspace() {
               isRunning={apiExecutor.isRunning}
             />
           )}
+          </div>
         </main>
       </div>
 

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 
 import { Checkbox } from "~/components/ui/checkbox";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "~/components/ui/command";
+import { iconActionClass, textActionClass } from "~/lib/interaction-styles";
 import { cn } from "~/lib/utils";
 
 export type ScopeWorkspace = { id: string; name: string };
@@ -40,19 +41,19 @@ export function WorkspaceScopeSelect({ id, label, workspaces, selectedIds, onCha
         type="button"
         aria-labelledby={`${id}-label`}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-10 w-full items-center justify-between rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+        className="flex h-10 w-full items-center justify-between rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none transition-[border-color,box-shadow] duration-200 ease-apple hover:border-zinc-300 focus:border-teal-700 focus:ring-4 focus:ring-teal-100 aria-expanded:border-teal-700"
       >
         <span className="truncate">{summary}</span>
-        <ChevronDown className={cn("size-4 shrink-0 text-zinc-400 transition-transform", open && "rotate-180")} />
+        <ChevronDown className={cn("size-4 shrink-0 text-zinc-400 transition-transform duration-300 ease-apple", open && "rotate-180")} />
       </button>
       {open && (
-        <div className="space-y-2 border border-zinc-200 bg-white p-3 shadow-sm">
+        <div className="space-y-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_18px_50px_-18px_rgb(0_0_0/0.25)] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-300 motion-safe:ease-apple">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex gap-3 text-xs font-medium text-teal-700">
-              <button type="button" onClick={() => onChange(workspaces.map((workspace) => workspace.id))}>Select all</button>
-              <button type="button" onClick={() => onChange([])}>Clear</button>
+            <div className="flex gap-1 text-xs font-medium text-teal-700">
+              <button type="button" className={textActionClass} onClick={() => onChange(workspaces.map((workspace) => workspace.id))}>Select all</button>
+              <button type="button" className={textActionClass} onClick={() => onChange([])}>Clear</button>
             </div>
-            <button type="button" onClick={() => setOpen(false)} className="text-xs font-medium text-zinc-500 hover:text-zinc-950">Done</button>
+            <button type="button" onClick={() => setOpen(false)} className={cn(textActionClass, "text-zinc-500 hover:text-zinc-950")}>Done</button>
           </div>
           {workspaces.length > 8 && (
             <input
@@ -108,14 +109,14 @@ export function ObjectSearchSelect({ id, label, placeholder, entries, selectedKe
         type="button"
         aria-labelledby={`${id}-label`}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-10 w-full items-center justify-between rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+        className="flex h-10 w-full items-center justify-between rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none transition-[border-color,box-shadow] duration-200 ease-apple hover:border-zinc-300 focus:border-teal-700 focus:ring-4 focus:ring-teal-100 aria-expanded:border-teal-700"
       >
         <span className="min-w-0 truncate text-left">{selectedEntry ? selectedEntry.primary : <span className="text-zinc-400">{placeholder}</span>}</span>
-        <ChevronDown className={cn("size-4 shrink-0 text-zinc-400 transition-transform", open && "rotate-180")} />
+        <ChevronDown className={cn("size-4 shrink-0 text-zinc-400 transition-transform duration-300 ease-apple", open && "rotate-180")} />
       </button>
       {selectedEntry && <p className="truncate text-xs text-zinc-500">{selectedEntry.secondary}</p>}
       {open && (
-        <div className="border border-zinc-200 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_18px_50px_-18px_rgb(0_0_0/0.25)] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-300 motion-safe:ease-apple">
           <Command>
             <CommandInput placeholder={placeholder} />
             <CommandList>
@@ -203,7 +204,7 @@ export function MultiObjectSearch({ id, label, placeholder, groups, selectedKeys
         aria-labelledby={`${id}-label`}
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none transition-[border-color,box-shadow] duration-200 ease-apple hover:border-zinc-300 focus:border-teal-700 focus:ring-4 focus:ring-teal-100 aria-expanded:border-teal-700"
       >
         <span className="flex min-w-0 items-center gap-2">
           <Search className="size-4 shrink-0 text-zinc-400" />
@@ -211,10 +212,10 @@ export function MultiObjectSearch({ id, label, placeholder, groups, selectedKeys
             {selectedKeys.length ? `${selectedKeys.length} selected` : <span className="text-zinc-400">{placeholder}</span>}
           </span>
         </span>
-        <ChevronDown className={cn("size-4 shrink-0 text-zinc-400 transition-transform", open && "rotate-180")} />
+        <ChevronDown className={cn("size-4 shrink-0 text-zinc-400 transition-transform duration-300 ease-apple", open && "rotate-180")} />
       </button>
       {open && (
-        <div className="border border-zinc-200 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_18px_50px_-18px_rgb(0_0_0/0.25)] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-300 motion-safe:ease-apple">
           <Command shouldFilter={false}>
             <CommandInput value={query} onValueChange={setQuery} placeholder={placeholder} aria-label={placeholder} autoFocus />
             <CommandList className="max-h-96">
@@ -246,9 +247,9 @@ export function MultiObjectSearch({ id, label, placeholder, groups, selectedKeys
           </Command>
           <div className="flex items-center justify-between gap-2 border-t border-zinc-200 px-3 py-2 text-xs">
             <span className="text-zinc-500">{selectedKeys.length} selected</span>
-            <div className="flex gap-3 font-medium">
-              <button type="button" className="text-teal-700 disabled:text-zinc-400" disabled={!selectedKeys.length} onClick={() => onChange([])}>Clear</button>
-              <button type="button" className="text-zinc-500 hover:text-zinc-950" onClick={() => setOpen(false)}>Done</button>
+            <div className="flex gap-1 font-medium">
+              <button type="button" className={cn(textActionClass, "text-teal-700 disabled:text-zinc-400")} disabled={!selectedKeys.length} onClick={() => onChange([])}>Clear</button>
+              <button type="button" className={cn(textActionClass, "text-zinc-500 hover:text-zinc-950")} onClick={() => setOpen(false)}>Done</button>
             </div>
           </div>
         </div>
@@ -256,10 +257,10 @@ export function MultiObjectSearch({ id, label, placeholder, groups, selectedKeys
       {selectedEntries.length > 0 && (
         <ul className="flex flex-wrap gap-1.5" aria-label={`Selected ${label.toLowerCase()}`}>
           {selectedEntries.map(({ key, entry, chipLabel }) => (
-            <li key={key} className="flex max-w-full items-center gap-1.5 rounded-md border border-fabric/25 bg-accent py-1 pr-1 pl-2 text-xs text-accent-foreground">
+            <li key={key} className="flex max-w-full items-center gap-1.5 rounded-full border border-fabric/25 bg-accent py-1 pr-1 pl-2.5 text-xs text-accent-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-300 motion-safe:ease-apple">
               <span className="shrink-0 font-semibold uppercase opacity-70">{chipLabel}</span>
               <span className="min-w-0 truncate" title={`${entry.primary} — ${entry.secondary}`}>{entry.chipText ?? entry.primary}</span>
-              <button type="button" aria-label={`Remove ${entry.chipText ?? entry.primary}`} onClick={() => toggle(key)} className="rounded p-0.5 hover:bg-fabric/15">
+              <button type="button" aria-label={`Remove ${entry.chipText ?? entry.primary}`} onClick={() => toggle(key)} className={cn(iconActionClass, "p-0.5 hover:bg-fabric/15")}>
                 <X className="size-3" />
               </button>
             </li>

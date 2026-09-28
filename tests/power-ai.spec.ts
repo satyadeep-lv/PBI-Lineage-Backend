@@ -894,14 +894,14 @@ async function mockChatAnswers(page: Page, respond: (count: number) => ChatRespo
   return bodies;
 }
 
-/** Report lineage on its Semantic - DB mapping section, with `/ai/explain` answered by `respond`. */
+/** Report lineage on its Database mapping section, with `/ai/explain` answered by `respond`. */
 async function openMeasurePanel(page: Page, respond: (body: Record<string, unknown>) => ChatResponseFixture) {
   await mockReportLineageBackend(page);
   await mockAiStatus(page, { status: 200, json: readyStatus() });
   await page.route("**/api/v1/ai/explain", (route) => route.fulfill({ json: respond(route.request().postDataJSON()) }));
   await page.goto("/workspace/report-lineage");
   await expect(page.getByRole("heading", { name: "Report lineage" })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole("tab", { name: "Semantic - DB objects mappings", exact: true }).click();
+  await page.getByRole("tab", { name: "Database mapping", exact: true }).click();
   await expect(page.getByText("Measure definition with Power AI")).toBeVisible();
 }
 
@@ -986,12 +986,12 @@ async function mockAiStatus(page: Page, response: { status: number; json: unknow
   await page.route("**/api/v1/ai/status", (route) => route.fulfill({ status: response.status, json: response.json }));
 }
 
-/** Picks one semantic model table in Table impact's single "Tables" search, then closes the list. */
+/** Picks one semantic table in Table impact's single "Tables" search, then closes the list. */
 async function selectSemanticTable(page: Page, tableName: string) {
   await page.getByRole("button", { name: "Tables", exact: true }).click();
-  await page.getByPlaceholder("Search semantic model or database tables...").fill(tableName);
+  await page.getByPlaceholder("Search semantic tables or database tables...").fill(tableName);
   await page
-    .getByRole("group", { name: /^Semantic model tables/ })
+    .getByRole("group", { name: /^Semantic tables \(\d+\)$/ })
     .getByRole("option")
     .filter({ has: page.getByText(tableName, { exact: true }) })
     .click();

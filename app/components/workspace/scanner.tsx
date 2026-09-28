@@ -17,6 +17,7 @@ import {
   type ScannerWorkspace,
 } from "~/lib/scanner-api";
 import { useWorkspaceScan } from "~/lib/use-workspace-scan";
+import { sectionTabClass } from "~/lib/interaction-styles";
 import { cn } from "~/lib/utils";
 import { useAppStore } from "~/stores/app-store";
 
@@ -132,7 +133,7 @@ export function Scanner() {
 
         <div className="overflow-x-auto border-b border-border bg-subtle">
           <div className="flex min-w-max" role="tablist" aria-label="Scanner data categories">
-            {SCANNER_TABS.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} className={cn("border-b-2 px-4 py-3 text-left text-sm transition-colors", activeTab === tab.id ? "border-fabric font-semibold text-fabric" : "border-transparent text-muted-foreground hover:text-foreground")}>{tab.label}</button>)}
+            {SCANNER_TABS.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} className={sectionTabClass(activeTab === tab.id, "px-4 py-3 text-left")}>{tab.label}</button>)}
           </div>
         </div>
 

@@ -216,7 +216,7 @@ function SnowflakeTraceHeading({ icon, title, text }: { icon: React.ReactNode; t
 function SelectField({ id, label, value, onChange, mono = false, children }: { id: string; label: string; value: string; onChange: (value: string) => void; mono?: boolean; children: React.ReactNode }) {
   return <div className="space-y-1.5">
     <label className="text-xs font-semibold text-zinc-600" htmlFor={id}>{label}</label>
-    <select id={id} value={value} onChange={(event) => onChange(event.target.value)} className={`h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100${mono ? " font-mono" : ""}`}>
+    <select id={id} value={value} onChange={(event) => onChange(event.target.value)} className={`h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none transition-[border-color,box-shadow] duration-200 ease-apple hover:border-zinc-300 focus:border-teal-700 focus:ring-4 focus:ring-teal-100${mono ? " font-mono" : ""}`}>
       {children}
     </select>
   </div>;
@@ -392,7 +392,7 @@ function SnowflakeTraceError({ error }: { error: unknown }) {
   if (isSessionExpired(error)) {
     return <div className="border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
       <p>No active Snowflake connection. This trace runs against Snowflake directly, so connecting Power BI is not enough.</p>
-      <a href="/workspace/database" className="mt-3 inline-flex h-8 items-center rounded-md bg-fabric px-3 text-xs font-medium text-primary-foreground hover:bg-fabric-hover">Open database setup</a>
+      <a href="/workspace/database" className="mt-3 inline-flex h-8 text-xs items-center rounded-full bg-fabric px-4 font-medium text-primary-foreground outline-none transition-[background-color,scale] duration-200 ease-apple hover:bg-fabric-hover focus-visible:ring-4 focus-visible:ring-ring/25 active:scale-[0.97]">Open database setup</a>
     </div>;
   }
   const apiError = error instanceof ApiError ? error : null;

@@ -29,7 +29,7 @@ export function CopyButton({ text, label, children, className }: { text: string;
       aria-label={label}
       title={label}
       className={cn(
-        "inline-flex items-center gap-1 rounded-md text-xs font-medium text-zinc-500 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600",
+        "inline-flex items-center gap-1 rounded-md text-xs font-medium text-zinc-500 transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 active:scale-95",
         className,
       )}
     >

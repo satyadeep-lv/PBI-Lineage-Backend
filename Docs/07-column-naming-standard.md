@@ -12,9 +12,13 @@ standard gives each object one plain-language name that a business user of
 Power BI can read without help, and uses that same name on screen, in
 **Copy table**, and in **CSV** and **Excel** files.
 
-> **Status: proposal.** Nothing in the application has been changed. The
-> mapping tables below show the current name, taken from the source code, next
-> to the proposed name, so the change can be reviewed and applied later.
+> **Status: applied (2026-09-29).** Every page now uses the "Proposed" names
+> below. The mapping tables keep the old name beside each standard name as a
+> record of what changed. The names live in one glossary,
+> [`app/lib/naming.ts`](../app/lib/naming.ts), and the export rule (screen
+> header = file header, context first, IDs last) lives in
+> [`app/lib/grid-export.ts`](../app/lib/grid-export.ts). The Playwright suite
+> asserts the headers and export order of every grid it covers.
 
 ## At a glance: the ten most important renames
 
@@ -584,8 +588,15 @@ their content is identical.
 
 ## Adoption notes for developers
 
-These are suggestions for when the standard is applied. Nothing has been
-implemented.
+These notes were written before the standard was applied; all of them are now
+done. Keep following them when you add or change a grid:
+
+- A new header or value goes into `COLUMN` or `VALUE` in `app/lib/naming.ts`
+  first, then the grid uses it. Do not type a header string inside a page.
+- One behaviour to know: when a grid already has a column with the same name
+  as a context column (for example Table impact's per-row **Selected tables**),
+  the export keeps only the grid's column, so a file never has two columns with
+  one name.
 
 - **Set `headerName` on every column.** When `headerName` is missing, AG
   Grid Title-Cases the field name, which is why Table impact and Measure

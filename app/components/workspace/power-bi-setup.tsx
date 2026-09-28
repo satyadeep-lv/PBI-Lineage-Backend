@@ -24,6 +24,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { type ApiResult, SETUP_ENDPOINTS } from "~/lib/api-catalog";
+import { segmentClass, segmentGroupClass } from "~/lib/interaction-styles";
 import type { ExecuteEndpoint } from "~/lib/use-api-executor";
 
 const powerBiSchema = z.object({
@@ -153,9 +154,9 @@ export function PowerBiSetup({
         </ol>
 
         <form onSubmit={form.handleSubmit(startAuthentication)}>
-          <div className="mb-5 inline-flex rounded-md border border-border bg-subtle p-1" role="group" aria-label="Microsoft authentication method">
-            <button type="button" onClick={() => { form.setValue("authenticationMethod", "device_code"); form.clearErrors("clientSecret"); }} className={`inline-flex h-8 items-center gap-2 rounded-sm px-3 text-sm font-medium ${authenticationMethod === "device_code" ? "bg-surface text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}><KeyRound className="size-4" /> Device code</button>
-            <button type="button" onClick={() => form.setValue("authenticationMethod", "client_secret")} className={`inline-flex h-8 items-center gap-2 rounded-sm px-3 text-sm font-medium ${authenticationMethod === "client_secret" ? "bg-surface text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}><Building2 className="size-4" /> Service principal</button>
+          <div className={`mb-5 ${segmentGroupClass}`} role="group" aria-label="Microsoft authentication method">
+            <button type="button" onClick={() => { form.setValue("authenticationMethod", "device_code"); form.clearErrors("clientSecret"); }} className={segmentClass(authenticationMethod === "device_code", "h-8")}><KeyRound className="size-4" /> Device code</button>
+            <button type="button" onClick={() => form.setValue("authenticationMethod", "client_secret")} className={segmentClass(authenticationMethod === "client_secret", "h-8")}><Building2 className="size-4" /> Service principal</button>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -184,7 +185,7 @@ export function PowerBiSetup({
               <code className="border border-sky-200 bg-white px-4 py-2 text-lg font-semibold tracking-normal text-sky-950">{deviceDetails.userCode}</code>
               <Button type="button" variant="outline" size="icon" aria-label="Copy device code" title="Copy device code" onClick={() => void navigator.clipboard.writeText(deviceDetails.userCode)}><Copy className="size-4" /></Button>
               <Button type="button" onClick={() => window.open(deviceDetails.verificationUri, "_blank", "noreferrer") }>
-                Open Microsoft <ExternalLink className="size-4" />
+                Open Microsoft <ExternalLink data-icon="inline-end" className="size-4" />
               </Button>
             </div>
             {deviceDetails.expiresIn != null && <p className="mt-3 text-xs text-sky-800">The code expires in about {Math.max(1, Math.round(deviceDetails.expiresIn / 60))} minutes.</p>}
@@ -202,7 +203,7 @@ export function PowerBiSetup({
           onCheck={() => void checkStatus()}
           onLogout={() => void logout()}
         />
-        <div className="mt-6 flex justify-end border-t border-zinc-200 pt-5"><Button type="button" variant="outline" onClick={onExplore}>Continue to database <ArrowRight className="size-4" /></Button></div>
+        <div className="mt-6 flex justify-end border-t border-zinc-200 pt-5"><Button type="button" variant="outline" onClick={onExplore}>Continue to database <ArrowRight data-icon="inline-end" className="size-4" /></Button></div>
       </div>
     </section>
   );

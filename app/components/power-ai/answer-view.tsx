@@ -111,7 +111,7 @@ export function AnswerView({ text, evidence = [], variant, onEntity, entitiesDis
               setOverrides({});
               setExpandAll(true);
             }}
-            className="inline-flex items-center gap-1 text-xs font-medium text-teal-800 hover:text-teal-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+            className="inline-flex items-center gap-1 rounded-md text-xs font-medium text-teal-800 transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:text-teal-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
           >
             <ChevronDown className="size-3.5" aria-hidden /> Show full answer ({hiddenCount} more {hiddenCount === 1 ? "section" : "sections"})
           </button>
@@ -161,7 +161,7 @@ function SectionCard({ section, collapsed, onToggle, chips, sectionRef, highligh
           aria-expanded={!collapsed}
           aria-controls={bodyId}
           onClick={onToggle}
-          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
         >
           <Icon className="size-4 shrink-0 text-teal-700" aria-hidden />
           <span className="min-w-0 flex-1">{section.displayTitle}</span>

@@ -132,7 +132,7 @@ export function ApiExecutionPanel({
                 <span className="font-normal text-zinc-400">{parameter.in}</span>
               </label>
               {enumValues.length > 0
-                ? <select id={id} value={parameters[parameter.name] ?? ""} onChange={(event) => setParameters((current) => ({ ...current, [parameter.name]: event.target.value }))} className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-cyan-800 focus:ring-2 focus:ring-cyan-100"><option value="">Select {parameter.name}</option>{enumValues.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+                ? <select id={id} value={parameters[parameter.name] ?? ""} onChange={(event) => setParameters((current) => ({ ...current, [parameter.name]: event.target.value }))} className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm outline-none transition-[border-color,box-shadow] duration-200 ease-apple hover:border-zinc-300 focus:border-cyan-800 focus:ring-4 focus:ring-cyan-100"><option value="">Select {parameter.name}</option>{enumValues.map((value) => <option key={value} value={value}>{value}</option>)}</select>
                 : <Input id={id} value={parameters[parameter.name] ?? ""} onChange={(event) => setParameters((current) => ({ ...current, [parameter.name]: event.target.value }))} placeholder={`${parameter.in} parameter`} />}
               {parameter.description && <p className="text-xs leading-5 text-zinc-500">{parameter.description}</p>}
             </div>;
@@ -161,7 +161,7 @@ export function ApiExecutionPanel({
         </div>
 
         <div className="flex border-b border-zinc-800 px-3 pt-2" role="tablist" aria-label="API response output">
-          {(["body", "headers"] as ResponseView[]).map((view) => <button key={view} type="button" role="tab" aria-selected={responseView === view} onClick={() => setResponseView(view)} className={cn("border-b-2 px-3 py-2 text-xs font-medium capitalize", responseView === view ? "border-cyan-400 text-cyan-200" : "border-transparent text-zinc-400 hover:text-zinc-200")}>{view}</button>)}
+          {(["body", "headers"] as ResponseView[]).map((view) => <button key={view} type="button" role="tab" aria-selected={responseView === view} onClick={() => setResponseView(view)} className={cn("border-b-2 px-3 py-2 text-xs font-medium capitalize outline-none transition-[color,border-color] duration-300 ease-apple focus-visible:text-cyan-100", responseView === view ? "border-cyan-400 text-cyan-200" : "border-transparent text-zinc-400 hover:text-zinc-200")}>{view}</button>)}
         </div>
         {endpointResult && !endpointResult.ok && error && <div role="alert" className="border-b border-rose-900 bg-rose-950/60 px-4 py-3 text-xs leading-5 text-rose-200">{error}</div>}
         <pre className="min-h-72 max-h-[560px] overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-zinc-200">{output}</pre>

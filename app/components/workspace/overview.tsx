@@ -33,7 +33,7 @@ type ListItem = { id: string; name: string; to: string; meta?: ReactNode; label?
 type ListGroup = { id: string; name: string; items: ListItem[] };
 
 /** Entrance motion shared by every block; each block staggers it with its own delay. */
-const ENTER_CLASS = "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:fill-mode-both";
+const ENTER_CLASS = "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:fill-mode-both motion-safe:ease-apple";
 
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 
@@ -110,7 +110,7 @@ export function Overview() {
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-surface">
       <div className="border-b border-border px-5 py-5 sm:px-6">
-        <div className={cn("flex items-start gap-3", ENTER_CLASS)} style={{ animationDuration: "400ms" }}>
+        <div className={cn("flex items-start gap-3", ENTER_CLASS)} style={{ animationDuration: "700ms" }}>
           <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-fabric text-primary-foreground">
             <LayoutDashboard className="size-5" />
           </span>
@@ -178,7 +178,7 @@ function TotalTile({ icon: Icon, label, value, caption, state, delay }: {
   delay: number;
 }) {
   return (
-    <div className={cn("rounded-lg border border-border bg-subtle px-4 py-4", ENTER_CLASS)} style={{ animationDelay: `${delay}ms`, animationDuration: "500ms" }}>
+    <div className={cn("rounded-lg border border-border bg-subtle px-4 py-4", ENTER_CLASS)} style={{ animationDelay: `${delay}ms`, animationDuration: "800ms" }}>
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs font-semibold uppercase text-muted-foreground">{label}</span>
         <span className="flex size-8 items-center justify-center rounded-md border border-fabric/20 bg-surface text-fabric">
@@ -247,7 +247,7 @@ function OverviewColumn({ id, icon: Icon, title, description, groups, flat = fal
       id={id}
       aria-labelledby={`${id}-heading`}
       className={cn("flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-surface", ENTER_CLASS)}
-      style={{ animationDelay: `${delay}ms`, animationDuration: "500ms" }}
+      style={{ animationDelay: `${delay}ms`, animationDuration: "800ms" }}
     >
       <div className="border-b border-border bg-subtle px-4 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -322,13 +322,13 @@ function OverviewLink({ item }: { item: ListItem }) {
       to={item.to}
       aria-label={item.label}
       title={item.name}
-      className="group flex items-center gap-3 px-4 py-2 text-sm transition-colors duration-150 outline-none hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
+      className="group flex items-center gap-3 px-4 py-2 text-sm transition-colors duration-300 ease-apple outline-none hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset active:bg-accent"
     >
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium text-foreground">{item.name}</span>
         {item.meta ? <span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.meta}</span> : null}
       </span>
-      <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-fabric group-focus-visible:text-fabric" />
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-[translate,color] duration-300 ease-apple group-hover:translate-x-0.5 group-hover:text-fabric group-focus-visible:text-fabric" />
     </Link>
   );
 }

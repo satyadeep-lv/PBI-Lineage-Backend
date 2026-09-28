@@ -74,7 +74,7 @@ function LayerColumn({ layer, ...props }: { layer: LineageLayer } & CardProps) {
         <button
           type="button"
           onClick={() => setShowAll((value) => !value)}
-          className="mt-1 text-[11px] font-medium text-teal-800 hover:text-teal-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+          className="mt-1 rounded-sm text-[11px] font-medium text-teal-800 transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:text-teal-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
         >
           {showAll ? "Show fewer" : `+${hidden} more`}
         </button>

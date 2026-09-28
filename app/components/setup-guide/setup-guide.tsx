@@ -93,7 +93,7 @@ export function SetupGuide() {
             <div className="mt-7 flex flex-wrap gap-3">
               <Button nativeButton={false} render={<a href="#before-you-begin" />}>
                 Begin with prerequisites
-                <ArrowRight className="size-4" />
+                <ArrowRight data-icon="inline-end" className="size-4" />
               </Button>
               <Button nativeButton={false} variant="outline" render={<Link to="/" />}>
                 View overview
@@ -445,7 +445,7 @@ export function SetupGuide() {
               </Button>
               <Button nativeButton={false} render={<Link to="/workspace/power-bi" />}>
                 Start Power BI setup
-                <ArrowRight className="size-4" />
+                <ArrowRight data-icon="inline-end" className="size-4" />
               </Button>
             </div>
           </GuideSection>
@@ -723,7 +723,7 @@ function ExternalReference({ label, href }: { label: string; href: string }) {
   return (
     <a href={href} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 py-3 text-sm text-cyan-800 hover:text-cyan-950 hover:underline">
       <span>{label}</span>
-      <ExternalLink className="size-4 shrink-0" />
+      <ExternalLink data-icon="inline-end" className="size-4 shrink-0 transition-transform duration-300 ease-apple" />
     </a>
   );
 }

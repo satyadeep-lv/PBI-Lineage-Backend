@@ -191,7 +191,7 @@ function GroupButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex h-8 items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors",
+        "inline-flex h-8 items-center gap-2 rounded-full border px-3.5 text-xs font-medium outline-none transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple focus-visible:ring-4 focus-visible:ring-ring/25 active:scale-[0.97]",
         active
           ? "border-fabric bg-fabric text-primary-foreground"
           : "border-border bg-surface text-muted-foreground hover:border-fabric/50 hover:text-foreground",

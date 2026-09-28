@@ -13,6 +13,7 @@ handbook.
 | [04-state-and-api-layer.md](04-state-and-api-layer.md) | Zustand/TanStack Query ownership plus OpenAPI, lineage, impact-evidence, scanner, dependency, impact-picker, and export utilities. |
 | [05-file-reference.md](05-file-reference.md) | Per-file responsibility map for source, tests, walkthrough tooling, CI/CD, and Azure scripts. |
 | [06-testing-and-deployment.md](06-testing-and-deployment.md) | Commands, Playwright coverage, production build, Azure release, IIS, and verification. |
+| [07-column-naming-standard.md](07-column-naming-standard.md) | The naming standard every grid, tile, message, and export follows (applied), with each old name beside its standard one, the export file names, and words to avoid. |
 
 ## Quick Facts
 
@@ -22,6 +23,13 @@ handbook.
   Markdown, script, or test file never reloads the dev page.
 - State: TanStack Query for server state; in-memory Zustand for API origin and
   the optional ephemeral administrative key.
+- Names: one glossary, `app/lib/naming.ts`, following
+  [07-column-naming-standard.md](07-column-naming-standard.md). Copy table,
+  CSV, and Excel write the on-screen headers, context first and IDs last
+  (`toExportTable` in `app/lib/grid-export.ts`).
+- Look and motion: pill buttons, shared `ease-apple` easing, scroll reveal
+  (`app/components/reveal.tsx`), and interaction helpers
+  (`app/lib/interaction-styles.ts`), all off under reduced motion.
 - Evidence UI: AG Grid for copyable/exportable tables; React Flow plus ELK
   for directed, draggable, collapsible lineage diagrams. Table and Measure
   Impact share one impact graph (`impact-lineage.tsx`), drawn like the

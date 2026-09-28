@@ -24,7 +24,7 @@ import {
 } from "~/components/workspace/evidence-ui";
 import { requestJson } from "~/lib/lineage-api";
 import { COLUMN, exportOnlyColumn, OBJECT_TYPE_LABELS, objectTypeLabel, reportFormatLabel, reportTypeLabel, VALUE } from "~/lib/naming";
-import { cn } from "~/lib/utils";
+import { sectionTabClass } from "~/lib/interaction-styles";
 import { useAppStore } from "~/stores/app-store";
 
 /** Every view here works against the one report the caller selected, so the picker lives above these rather than inside each of them. */
@@ -292,7 +292,7 @@ export function ReportEvidence({ binding, modelNames, activeSection, onSectionCh
   return <>
     <div className="overflow-x-auto border-b border-zinc-200">
       <div className="flex min-w-max gap-1" role="tablist" aria-label="Report sections">
-        {REPORT_SECTIONS.map((section) => <button key={section.id} type="button" role="tab" aria-selected={activeSection === section.id} onClick={() => onSectionChange(section.id)} className={cn("border-b-2 px-3 py-2 text-sm transition", activeSection === section.id ? "border-teal-700 font-semibold text-teal-800" : "border-transparent text-zinc-500 hover:text-zinc-950")} title={section.label}>{section.shortLabel}</button>)}
+        {REPORT_SECTIONS.map((section) => <button key={section.id} type="button" role="tab" aria-selected={activeSection === section.id} onClick={() => onSectionChange(section.id)} className={sectionTabClass(activeSection === section.id, "px-3 py-2")} title={section.label}>{section.shortLabel}</button>)}
       </div>
     </div>
     {activeSection === "report-detail" && <ReportDetailTab workspace={workspace} selectedReport={report} reportSemanticModel={boundModel} semanticModelId={boundModelId} detailQuery={reportDetailQuery} pagesQuery={reportPagesQuery} />}

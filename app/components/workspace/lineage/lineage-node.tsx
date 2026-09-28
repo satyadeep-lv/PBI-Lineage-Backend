@@ -47,7 +47,7 @@ const LineageNode = memo(function LineageNode({ id, data }: NodeProps<LineageFlo
       {data.hasChildren && (
         <button
           type="button"
-          className="nodrag nopan absolute -right-2 -top-2 flex h-5 items-center gap-0.5 rounded-full border border-zinc-300 bg-white px-1 text-[10px] text-zinc-700 shadow-sm hover:bg-zinc-50"
+          className="nodrag nopan absolute -right-2 -top-2 flex h-5 items-center gap-0.5 rounded-full border border-zinc-300 bg-white px-1 text-[10px] text-zinc-700 shadow-sm outline-none transition-[color,background-color,border-color,scale] duration-200 ease-apple hover:border-fabric/50 hover:bg-zinc-50 hover:text-fabric focus-visible:ring-2 focus-visible:ring-ring/40 active:scale-90"
           onClick={(event) => { event.stopPropagation(); data.onToggle(id); }}
           aria-label={data.collapsed ? "Expand descendants" : "Collapse descendants"}
         >

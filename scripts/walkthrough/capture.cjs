@@ -49,7 +49,7 @@ const documentsTrigger = (page) =>
 // Table impact's single search: a "Tables" trigger opening one input over two result columns.
 const TABLE_QUERY = "sales";
 const tablesTrigger = (page) => page.getByRole("button", { name: "Tables", exact: true });
-const tablesInput = (page) => page.getByPlaceholder("Search semantic model or database tables...");
+const tablesInput = (page) => page.getByPlaceholder("Search semantic tables or database tables...");
 const searchGroup = (page, heading) =>
   page.locator("[cmdk-group]").filter({ has: page.locator("[cmdk-group-heading]", { hasText: heading }) });
 const searchOption = (page, heading, primary) =>
@@ -57,11 +57,12 @@ const searchOption = (page, heading, primary) =>
 
 // Measure impact's measure picker: a "Measure" trigger opening a searchable list.
 const MEASURE_QUERY = "total sales";
-const MEASURE_LABEL = "Sales[Total Sales]";
+// Entries show the measure name first ("Total Sales"), then "Sales · Finance Model · Finance".
+const MEASURE_NAME = "Total Sales";
 const measureTrigger = (page) => page.getByRole("button", { name: "Measure", exact: true });
 const measureInput = (page) => page.getByPlaceholder("Search a measure by name...");
 const measureOption = (page) =>
-  page.getByRole("option").filter({ has: page.getByText(MEASURE_LABEL, { exact: true }) }).filter({ hasText: "Finance Model" });
+  page.getByRole("option").filter({ has: page.getByText(MEASURE_NAME, { exact: true }) }).filter({ hasText: "Finance Model" });
 
 // Impact pages: the summary tiles row, the graph card, and a report node's +N visuals badge.
 const summaryTiles = (page) =>
@@ -112,7 +113,7 @@ async function waitForQuiet(page) {
     };
     const busy = [...document.querySelectorAll(".animate-spin, .animate-pulse, [aria-busy='true'], [data-slot='skeleton']")].some(visible);
     const text = document.body.innerText;
-    const loadingText = /Loading backend API catalog|Building (the )?(table|measure) inventory|Preparing exact DAX|Checking \d+ bound|Checking reports\.\.\.|Finding the reports bound/i.test(text);
+    const loadingText = /Loading backend API catalog|Building (the )?(table|measure) inventory|Finding calculation links|Checking the visuals in|Checking reports\.\.\.|Finding the reports connected/i.test(text);
     return !busy && !loadingText;
   }, null, { timeout: 60_000 });
   // Two frames for React to commit, then a beat for hover/entrance transitions.
@@ -321,8 +322,8 @@ function storyboard(base) {
       caption: "Open any report in Explorer",
       async ready(page) {
         await page.getByRole("heading", { name: "Explorer", exact: true }).waitFor();
-        await page.getByRole("tab", { name: "Reports", exact: true, selected: true }).waitFor();
-        await page.getByText("Linked model", { exact: true }).waitFor();
+        await page.getByRole("tab", { name: "Report details", exact: true, selected: true }).waitFor();
+        await page.getByText("Number of pages", { exact: true }).waitFor();
         await page.locator("main .ag-row").first().waitFor();
         // Open on the selected report and its evidence rather than the page intro.
         await scrollToTop(page, page.getByRole("tablist", { name: "Explorer sections" }), 8);
@@ -336,21 +337,21 @@ function storyboard(base) {
       hold: 1300,
       async ready(page) {
         await page.getByRole("heading", { name: "Report lineage", exact: true }).waitFor();
-        await page.getByText("Selected report ID:").waitFor();
+        await page.getByText("Report ID:").waitFor();
         await page.locator("main .ag-row").first().waitFor();
       },
-      moves: [{ target: (page) => page.getByRole("tab", { name: "Report visuals", exact: true }), click: true }],
+      moves: [{ target: (page) => page.getByRole("tab", { name: "Visual fields", exact: true }), click: true }],
     },
     {
       id: "05b-report-visuals",
       step: 5,
       caption: "Trace report lineage end to end",
       async ready(page) {
-        await page.getByRole("heading", { name: "Report visual lineage" }).waitFor();
-        await page.getByText("Linked semantic model:").waitFor();
-        await page.getByText("Field references", { exact: true }).waitFor();
+        await page.getByRole("heading", { name: "Visual fields traced to the database" }).waitFor();
+        await page.getByText(/^Semantic model: /).waitFor();
+        await page.getByText("Fields in visuals", { exact: true }).waitFor();
         await page.locator("main .ag-row").first().waitFor();
-        await scrollToTop(page, page.getByRole("tablist", { name: "Report evidence sections" }), 8);
+        await scrollToTop(page, page.getByRole("tablist", { name: "Report sections" }), 8);
       },
       moves: [{ target: (page) => sidebarItem(page, "Table impact"), click: true }],
     },
@@ -373,7 +374,7 @@ function storyboard(base) {
       hold: 1700,
       async ready(page) {
         await tablesInput(page).fill(TABLE_QUERY);
-        await searchGroup(page, /^Semantic model tables \(\d+\)/).getByRole("option").first().waitFor();
+        await searchGroup(page, /^Semantic tables \(\d+\)/).getByRole("option").first().waitFor();
         await searchGroup(page, /^Database tables \(\d+\)/).getByRole("option").first().waitFor();
         // The open list runs past the fold; bring the whole dropdown into view (inventory line on top)
         // and keep the pointer on the trigger it just clicked, the way the page moves under a real hand.
@@ -383,10 +384,10 @@ function storyboard(base) {
         return { mouse };
       },
       moves: [
-        { target: (page) => searchOption(page, /^Semantic model tables/, "Sales"), click: true },
+        { target: (page) => searchOption(page, /^Semantic tables/, "Sales"), click: true },
         {
           async before(page) {
-            await searchOption(page, /^Semantic model tables/, "Sales").and(page.locator("[data-checked='true']")).waitFor();
+            await searchOption(page, /^Semantic tables/, "Sales").and(page.locator("[data-checked='true']")).waitFor();
           },
           target: (page) => searchOption(page, /^Database tables/, "SALESDB.MART.FACT_ORDERS"),
           click: true,
@@ -407,10 +408,10 @@ function storyboard(base) {
       hold: 3400,
       async ready(page, { mouse }) {
         await tablesInput(page).waitFor({ state: "detached" });
-        await page.getByText(/exact DAX relationships? ready across 2 semantic models/).waitFor();
-        await page.getByText(/Visual usage checked across \d+ bound reports?/).waitFor();
+        await page.getByText(/calculation links? found in 2 semantic models/).waitFor();
+        await page.getByText(/Checked the visuals in \d+ connected reports?\./).waitFor();
         await page.getByText("With a visual that uses the tables", { exact: true }).waitFor();
-        await page.getByRole("heading", { name: "Impact of 2 tables" }).waitFor();
+        await page.getByRole("heading", { name: /^Impact of \d+ semantic tables$/ }).waitFor();
         await page.locator("main .ag-row").first().waitFor();
         await waitForQuiet(page);
         // The summary tiles on top, the impact graph beneath: the picked database table's chain
@@ -428,7 +429,7 @@ function storyboard(base) {
       async ready(page) {
         await page.getByRole("heading", { name: "Measure impact", exact: true }).waitFor();
         await page.getByText(/measures indexed across/).waitFor();
-        await page.getByText(/Visual usage checked across \d+ bound reports?/).waitFor();
+        await page.getByText(/Checked the visuals in \d+ connected reports?\./).waitFor();
         await graphSettled(page);
         await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
       },
@@ -452,7 +453,7 @@ function storyboard(base) {
       hold: 2600,
       async ready(page, { mouse }) {
         await measureInput(page).waitFor({ state: "detached" });
-        await page.getByRole("heading", { name: `${MEASURE_LABEL} impact` }).waitFor();
+        await page.getByRole("heading", { name: `${MEASURE_NAME} impact` }).waitFor();
         await page.locator("main .ag-row").first().waitFor();
         await waitForQuiet(page);
         // The summary tiles on top, the graph beneath from the database table down to the reports.
@@ -518,7 +519,7 @@ async function captureTheme(browser, base, theme) {
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(outDir, { recursive: true });
 
-  const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1, colorScheme: theme, reducedMotion: "no-preference" });
+  const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1, colorScheme: theme, reducedMotion: "reduce" });
   await context.addInitScript((value) => {
     try { window.localStorage.setItem("themePreference", value); } catch { /* storage unavailable */ }
   }, theme);

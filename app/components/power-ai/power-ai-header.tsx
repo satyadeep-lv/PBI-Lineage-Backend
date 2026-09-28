@@ -4,7 +4,7 @@ import { isUnlocked } from "~/lib/power-ai-api";
 import { usePowerAiStatus } from "~/lib/use-power-ai-status";
 import { usePowerAiStore } from "~/stores/power-ai-store";
 
-const ICON_BUTTON = "flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const ICON_BUTTON = "flex size-8 items-center justify-center rounded-full text-muted-foreground transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/25 active:scale-90";
 
 export function PowerAiHeader({ onCollapse }: { onCollapse?: () => void }) {
   const hasMessages = usePowerAiStore((state) => state.messages.length > 0);

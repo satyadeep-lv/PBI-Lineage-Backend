@@ -97,7 +97,7 @@ function CopyableCell({ value }: ICellRendererParams<ExplorerGridRow>) {
     window.setTimeout(() => setCopied(false), 1400);
   }
 
-  return <span className="group flex h-full min-w-0 items-center gap-1"><span className="min-w-0 truncate" title={text}>{abbreviate(text, 120)}</span><button type="button" aria-label="Copy cell value" title="Copy value" className="ml-auto hidden shrink-0 text-zinc-400 hover:text-teal-700 group-hover:inline-flex focus:inline-flex" onClick={(event) => void copyValue(event)}>{copied ? <CheckCircle2 className="size-3.5 text-emerald-700" /> : <Copy className="size-3.5" />}</button></span>;
+  return <span className="group flex h-full min-w-0 items-center gap-1"><span className="min-w-0 truncate" title={text}>{abbreviate(text, 120)}</span><button type="button" aria-label="Copy cell value" title="Copy value" className="ml-auto hidden shrink-0 rounded-full p-1 text-zinc-400 outline-none transition-[color,background-color,scale] duration-200 ease-apple hover:bg-accent hover:text-teal-700 focus-visible:ring-2 focus-visible:ring-ring/40 active:scale-90 group-hover:inline-flex focus:inline-flex" onClick={(event) => void copyValue(event)}>{copied ? <CheckCircle2 className="size-3.5 text-emerald-700" /> : <Copy className="size-3.5" />}</button></span>;
 }
 
 export function daxColumn(field = "daxExpression", headerName = "DAX expression"): ColDef<ExplorerGridRow> {

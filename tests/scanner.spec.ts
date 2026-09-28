@@ -72,7 +72,9 @@ test("scanner page runs a scan and populates every data category across its tabs
   expect(browserErrors).toEqual([]);
 });
 
-test("explorer's assets tab runs a scan for the current workspace and replaces the placeholders", async ({ page }) => {
+test("explorer's Workspace content tab runs a scan for the current workspace and replaces the placeholders", async ({ page }) => {
+  // Wide enough that AG Grid renders every Ownership column instead of virtualizing the last ones away.
+  await page.setViewportSize({ width: 1600, height: 900 });
   await mockScannerBackend(page, { immediateSucceed: true });
   await page.route("**/api/v1/workspaces/*/reports", (route) => route.fulfill({ json: { reports: [] } }));
   await page.route("**/api/v1/workspaces/*/semantic-models", (route) => route.fulfill({ json: { semantic_models: [] } }));
@@ -88,10 +90,16 @@ test("explorer's assets tab runs a scan for the current workspace and replaces t
 
   await expect(page.getByRole("heading", { name: "Dashboards" })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText("Executive Overview")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "App linkage" })).toBeVisible();
-  await expect(page.getByText("No app-linked content was found in this workspace.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Apps using this workspace" })).toBeVisible();
+  await expect(page.getByText("No report or dashboard in this workspace is in an app.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ownership" })).toBeVisible();
-  await expect(page.getByText("alex@contoso.com")).toBeVisible();
+  // The old mixed Owner column is split by kind of owner: a report's editor and creator, a semantic model's configurer.
+  for (const header of ["Item type", "Item name", "Last modified by", "Created by", "Configured by"]) {
+    await expect(page.getByRole("columnheader", { name: header, exact: true })).toBeVisible();
+  }
+  await expect(page.locator('[role="gridcell"][col-id="lastModifiedBy"]').filter({ hasText: "sam@contoso.com" })).toHaveCount(1);
+  await expect(page.locator('[role="gridcell"][col-id="createdBy"]').filter({ hasText: "alex@contoso.com" })).toHaveCount(1);
+  await expect(page.locator('[role="gridcell"][col-id="configuredBy"]').filter({ hasText: "alex@contoso.com" })).toHaveCount(1);
 
   await page.screenshot({ path: "test-results/explorer-scanner-panel.png", fullPage: true });
   expect(browserErrors).toEqual([]);

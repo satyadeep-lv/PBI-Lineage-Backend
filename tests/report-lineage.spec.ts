@@ -11,13 +11,13 @@ const snowflakeTarget = "PBI_LINEAGE_DEMO.MART.FACT_PBI_SALES_STORY";
 const snowflakeColumnTable = "ANALYTICS.PUBLIC.SALES";
 const snowflakeColumn = "AMOUNT";
 
-/** The five report-scoped views, shared with Explorer, in the order they are offered. */
+/** The five report-scoped views, shared with Explorer, in the order they are offered: tab, then heading. */
 const sections = [
-  ["Page details", "Report page details"],
-  ["Source DB lineage", "Source database lineage"],
+  ["Pages", "Report pages"],
+  ["Data sources", "Data sources behind this report"],
   ["Semantic objects", "Semantic model objects"],
-  ["Semantic - DB objects mappings", "Semantic to database object mappings"],
-  ["Report visuals", "Report visual lineage"],
+  ["Database mapping", "Semantic objects mapped to database columns"],
+  ["Visual fields", "Visual fields traced to the database"],
 ] as const;
 
 test("report lineage offers the explorer report sections for one estate-wide report", async ({ page }) => {
@@ -35,7 +35,7 @@ test("report lineage offers the explorer report sections for one estate-wide rep
 
   // Granularity is one report, picked by name from anywhere in the estate.
   await expect(page.getByLabel("Report", { exact: true })).toHaveValue(`${workspaceId}:${reportId}`);
-  await expect(page.getByText("Selected report ID:")).toContainText(reportId);
+  await expect(page.getByText("Report ID:")).toContainText(reportId);
   await expect(page.getByText("Sales Performance", { exact: true }).first()).toBeVisible();
 
   const tabs = page.getByRole("tab");
@@ -49,35 +49,37 @@ test("report lineage offers the explorer report sections for one estate-wide rep
     await expect(page.getByRole("button", { name: "Excel" }).first()).toBeVisible();
   }
 
-  // Source DB lineage carries the composite-model hop and offers its tables to a Snowflake trace.
-  // The Via column is off-screen at this width and AG Grid keeps off-screen cells
-  // out of the DOM entirely, so it is read back through the export instead.
-  await page.getByRole("tab", { name: "Source DB lineage", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Source database lineage" })).toBeVisible();
+  // Data sources carries the composite-model hop and offers its tables to a Snowflake trace.
+  // Reached through is off-screen at this width and AG Grid keeps off-screen cells
+  // out of the DOM entirely, so it is read back through the export instead. The export
+  // uses the on-screen headers: context names first, then the grid, then every ID.
+  await page.getByRole("tab", { name: "Data sources", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Data sources behind this report" })).toBeVisible();
   await page.getByRole("button", { name: "Copy table" }).first().click();
   const exported = await page.evaluate(() => navigator.clipboard.readText());
-  expect(exported).toContain("via");
-  expect(exported).toContain("Shared / Reference Model / Region");
-  expect(exported).toContain("Direct");
-  // An unresolved row is still listed rather than hidden.
-  expect(exported).toContain("Not resolved");
+  expect(exported.split(/\r?\n/)[0]).toBe(["Workspace name", "Report name", "Data source type", "Database account", "Database", "Schema", "Data source name", "Reached through", "Report ID", "Semantic model ID", "Workspace ID"].join("\t"));
+  expect(exported).toContain("Shared › Reference Model › Region");
+  expect(exported).toContain("Directly");
+  // A row whose source could not be traced is still listed rather than hidden.
+  expect(exported).toContain("Not found");
+  expect(exported).not.toMatch(/parent_|Not resolved|--/);
   await expect(page.getByText("Snowflake object lineage")).toBeVisible();
-  await expect(page.getByLabel("Fully qualified table")).toHaveValue("ANALYTICS.PUBLIC.SALES");
+  await expect(page.getByLabel("Database table", { exact: true })).toHaveValue("ANALYTICS.PUBLIC.SALES");
 
   // The mapping grid feeds both the measure definition panel and the column trace.
-  await page.getByRole("tab", { name: "Semantic - DB objects mappings", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Semantic to database object mappings" })).toBeVisible();
+  await page.getByRole("tab", { name: "Database mapping", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Semantic objects mapped to database columns" })).toBeVisible();
   await expect(page.getByText("Measure definition with Power AI")).toBeVisible();
   await expect(page.getByLabel("Measure", { exact: true })).toBeVisible();
   await expect(page.getByText("Snowflake column lineage")).toBeVisible();
-  await expect(page.getByLabel("Database column")).toHaveValue("AMOUNT");
+  await expect(page.getByLabel("Database column", { exact: true })).toHaveValue("AMOUNT");
 
-  await page.getByRole("tab", { name: "Report visuals", exact: true }).click();
-  await expect(page.getByText("Linked semantic model:")).toContainText("Sales Model");
+  await page.getByRole("tab", { name: "Visual fields", exact: true }).click();
+  await expect(page.getByText("Semantic model: Sales Model", { exact: true })).toBeVisible();
   await expect(page.getByText("2 rows").first()).toBeVisible();
   await page.getByRole("button", { name: "Copy table" }).first().click();
   const visualExport = await page.evaluate(() => navigator.clipboard.readText());
-  expect(visualExport).toContain("sourceColumn\tsourceTable");
+  expect(visualExport.split(/\r?\n/)[0]).toBe(["Workspace name", "Report name", "Semantic model", "Page name", "Visual name", "Semantic table", "Object name", "Object type", "DAX expression", "Database columns", "Database tables", "Workspace ID", "Report ID", "Semantic model ID"].join("\t"));
   expect(visualExport).toContain("AMOUNT, QUANTITY");
   expect(visualExport).toContain("ANALYTICS.PUBLIC.FACT_SALES, ANALYTICS.PUBLIC.FACT_QUANTITY");
 
@@ -90,7 +92,8 @@ test("the removed report lineage tabs are gone", async ({ page }) => {
   await page.goto("/workspace/report-lineage");
   await expect(page.getByRole("heading", { name: "Report lineage" })).toBeVisible({ timeout: 60_000 });
 
-  for (const gone of ["Report information", "Database objects", "Visual objects", "Semantic source mapping", "Visual source mapping", "Lineage"]) {
+  // The seven original tabs, then the four section names the naming standard replaced.
+  for (const gone of ["Report information", "Database objects", "Visual objects", "Semantic source mapping", "Visual source mapping", "Lineage", "Page details", "Source DB lineage", "Semantic - DB objects mappings", "Report visuals"]) {
     await expect(page.getByRole("tab", { name: gone, exact: true })).toHaveCount(0);
   }
 });

@@ -257,7 +257,7 @@ export function MeasureAiDefinition({ measures, context }: { measures: MeasureDe
             <div className="grid gap-4 md:grid-cols-[minmax(0,3fr)_auto] md:items-end">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-zinc-600" htmlFor="measure-ai-measure">Measure</label>
-                <select id="measure-ai-measure" value={selected?.key ?? ""} onChange={(event) => setSelectedKey(event.target.value)} className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100">
+                <select id="measure-ai-measure" value={selected?.key ?? ""} onChange={(event) => setSelectedKey(event.target.value)} className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none transition-[border-color,box-shadow] duration-200 ease-apple hover:border-zinc-300 focus:border-teal-700 focus:ring-4 focus:ring-teal-100">
                   {measures.map((measure) => <option key={measure.key} value={measure.key}>{measure.table} · {measure.name}</option>)}
                 </select>
               </div>
@@ -305,7 +305,7 @@ export function MeasureAiDefinition({ measures, context }: { measures: MeasureDe
                         onClick={() => goToSection(tab.sectionId)}
                         aria-current={highlighted === tab.sectionId ? "true" : undefined}
                         className={cn(
-                          "rounded-full border px-3 py-1 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600",
+                          "rounded-full border px-3 py-1 text-xs font-medium transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 active:scale-[0.97]",
                           highlighted === tab.sectionId ? "border-teal-700 bg-teal-700 text-white" : "border-zinc-200 text-zinc-700 hover:border-teal-700 hover:text-teal-900",
                         )}
                       >
@@ -341,7 +341,7 @@ export function MeasureAiDefinition({ measures, context }: { measures: MeasureDe
                         key={question}
                         type="button"
                         onClick={() => followUp(question)}
-                        className="rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-left text-xs text-teal-900 hover:border-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                        className="rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-left text-xs text-teal-900 transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:border-teal-700 hover:bg-teal-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 active:scale-[0.97]"
                       >
                         {question}
                       </button>

@@ -6,6 +6,7 @@ import type { LineageGraph } from "~/components/workspace/lineage/lineage-types"
 import { Button } from "~/components/ui/button";
 import { canonicalType, closureToLineageGraph, computeDependencyClosure, referenceKey, type DaxDependency, type DaxReference } from "~/lib/dependency-graph";
 import { COLUMN, objectTypeLabel, VALUE } from "~/lib/naming";
+import { segmentClass } from "~/lib/interaction-styles";
 import { cn } from "~/lib/utils";
 
 type ReportChoice = {
@@ -71,10 +72,10 @@ export function ReportLineageDiagrams({ report, snapshot, parsed, dax, exactLine
     </div>
 
     <div className="overflow-x-auto border-y border-zinc-200 bg-zinc-50 p-1">
-      <div className="flex min-w-max" role="tablist" aria-label="Lineage diagram type">
+      <div className="flex min-w-max gap-1" role="tablist" aria-label="Lineage diagram type">
         {modeOptions.map((option) => {
           const Icon = option.icon;
-          return <button key={option.id} type="button" role="tab" aria-selected={mode === option.id} onClick={() => setMode(option.id)} className={cn("inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm", mode === option.id ? "bg-white font-semibold text-cyan-900 shadow-sm ring-1 ring-zinc-200" : "text-zinc-600 hover:text-zinc-950")}><Icon className="size-4" />{option.label}</button>;
+          return <button key={option.id} type="button" role="tab" aria-selected={mode === option.id} onClick={() => setMode(option.id)} className={segmentClass(mode === option.id, "h-9")}><Icon className="size-4" />{option.label}</button>;
         })}
       </div>
     </div>
@@ -186,7 +187,7 @@ function ObjectEvidence({ object }: { object: LineageObject }) {
 }
 
 function LineageSelect({ id, label, value, options, onChange }: { id: string; label: string; value: string; options: SelectOption[]; onChange: (value: string) => void }) {
-  return <div className="min-w-0 space-y-1.5"><label className="text-xs font-semibold text-zinc-600" htmlFor={id}>{label}</label><select id={id} value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-cyan-800 focus:ring-2 focus:ring-cyan-100">{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>;
+  return <div className="min-w-0 space-y-1.5"><label className="text-xs font-semibold text-zinc-600" htmlFor={id}>{label}</label><select id={id} value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none transition-[border-color,box-shadow] duration-200 ease-apple hover:border-zinc-300 focus:border-cyan-800 focus:ring-4 focus:ring-cyan-100">{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>;
 }
 
 function Metric({ label, value }: { label: string; value: number }) { return <div className="min-w-0 border-r border-zinc-200 px-3 py-2 last:border-r-0"><p className="truncate text-[11px] text-zinc-500">{label}</p><p className="mt-1 text-sm font-semibold">{value}</p></div>; }

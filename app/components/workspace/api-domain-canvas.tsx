@@ -158,7 +158,7 @@ export function ApiDomainCanvas({
                   type="button"
                   onClick={() => setSelectedEndpointId(endpoint.id)}
                   className={cn(
-                    "w-full border px-3 py-2.5 text-left transition",
+                    "w-full rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow] duration-200 ease-apple focus-visible:ring-4 focus-visible:ring-ring/25",
                     selectedEndpointId === endpoint.id
                       ? "border-zinc-950 bg-white shadow-sm"
                       : "border-transparent hover:border-zinc-200 hover:bg-white",

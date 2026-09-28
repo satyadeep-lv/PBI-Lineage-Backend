@@ -104,7 +104,7 @@ export function AssistantMessage({ message, latest, busy, audience, onSend }: {
               disabled={busy}
               onClick={() => onSend(question)}
               className={cn(
-                "rounded-full border px-2.5 py-1 text-left text-xs disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600",
+                "rounded-full border px-2.5 py-1 text-left text-xs transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 active:scale-[0.97]",
                 nonAnswer
                   ? "border-sky-300 bg-white font-medium text-sky-900 hover:border-sky-700"
                   : "border-zinc-200 text-zinc-700 hover:border-zinc-950 hover:text-zinc-950",
@@ -124,7 +124,7 @@ export function AssistantMessage({ message, latest, busy, audience, onSend }: {
               type="button"
               disabled={busy}
               onClick={() => onSend(message.question!)}
-              className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-950 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              className="inline-flex items-center gap-1 rounded-md text-xs font-medium text-zinc-500 transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:text-zinc-950 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 active:scale-95"
             >
               <RotateCw className="size-3.5" aria-hidden /> Ask again
             </button>
@@ -135,7 +135,7 @@ export function AssistantMessage({ message, latest, busy, audience, onSend }: {
               aria-expanded={sourcesOpen}
               aria-controls={sourcesId}
               onClick={() => setSourcesOpen((open) => !open)}
-              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              className="ml-auto inline-flex items-center gap-1 rounded-md text-xs font-medium text-zinc-500 transition-[color,background-color,border-color,box-shadow,scale] duration-200 ease-apple hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 active:scale-95"
             >
               {sourcesOpen ? <ChevronDown className="size-3.5" aria-hidden /> : <ChevronRight className="size-3.5" aria-hidden />}
               Sources ({sourceCount})

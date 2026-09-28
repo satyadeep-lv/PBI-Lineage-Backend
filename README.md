@@ -11,6 +11,52 @@ Developed by **Satyadeep Singh**.
 
 ## Latest Changes
 
+- **Naming standard applied.** Every page, grid, tile, status message, and
+  export now uses one plain-language name per thing, as set out in
+  [`Docs/07-column-naming-standard.md`](Docs/07-column-naming-standard.md).
+  `app/lib/naming.ts` is the single glossary: `COLUMN` (headers such as
+  "Report name", "Semantic model ID", "Number of visuals", "Steps away", "How
+  it is used"), `VALUE` ("Not available", "Not found", "Not applicable",
+  "Yes"/"No"/"Unknown", "Direct"/"Indirect", "Uses it directly"/"Through a
+  measure"), and translators for report type, report format, storage mode, and
+  object type. Renamed places:
+  - Explorer tabs: **Workspace content** and **Report details** (were Assets &
+    access, and Reports).
+  - The five report sections shared by Explorer and Report lineage: **Pages**,
+    **Data sources**, **Semantic objects**, **Database mapping**, **Visual
+    fields** (were Page details, Source DB lineage, Semantic objects, Semantic
+    - DB objects mappings, Report visuals).
+  - Table impact searches **Semantic tables** and **Database tables**; its tiles
+    read Reports, Visuals, Semantic models, Impacted measures.
+  - Measure impact shows a measure as "Total Sales" with its **Semantic table**
+    beside it, instead of `Sales[Total Sales]`; its tiles read Semantic tables,
+    Impacted measures, Semantic models, Reports, Visuals.
+  - Explorer's scan panel shows **Apps using this workspace**, and Ownership is
+    split into **Last modified by**, **Created by**, and **Configured by**.
+- **Exports match the screen.** Copy table, CSV, and Excel write exactly the
+  headers the grid shows (see Table Copy And Export Rules). No `parent_…`,
+  camelCase, or Title Case headers remain, and file names follow
+  `<page>-<subject>-<grid>`.
+- **Buttons and motion restyled after apple.com.** Pill-shaped buttons with a
+  slight press-in, eased colour changes, and a soft focus ring; smooth, shared
+  easing on menus, dialogs, sheets, tooltips, tabs, and the sidebar; a frosted
+  header whose underlines grow in on hover; and a Home page whose headline
+  rises in line by line while the walkthrough and sections fade up as they
+  scroll into view. All motion is off under `prefers-reduced-motion`. See
+  Buttons And Motion.
+- **Snowflake column lineage no longer shows a detached node.** The backend's
+  column-level `qualified_name` already ends in the column
+  (`DB.SCHEMA.TABLE.COLUMN`); the diagram appended the column a second time,
+  so the traced column appeared twice, once unconnected. Names are now built
+  from the database, schema, and object parts, and the highlighted node is
+  picked from the traced dependencies instead of being added on its own.
+- **Tests and walkthrough follow the new names.** Every spec asserts the
+  standard headers, values, and export order. `tests/column-lineage.spec.ts`
+  tested a "Physical column lineage" tab that was never built; it was replaced
+  by `tests/database-mapping.spec.ts`, which covers Explorer's Database mapping
+  section. The Home walkthrough GIFs were re-recorded with the new names and
+  styling.
+
 - **Measure impact redesigned.** It keeps the workspace scope and the measure
   search. After a measure is picked it shows five tiles (Tables, Measures
   impacted, Semantic models, Reports, Visuals), the impact graph, and six
@@ -239,8 +285,9 @@ The application turns the backend API surface into guided operational views:
   persona-specific explanations, streamed responses, citations, and contextual
   questions seeded from impact-analysis selections.
 - Copy individual table values or full tables for analysis.
-- Download table data as CSV or Excel-compatible `.xls` files with parent
-  workspace, report, and semantic-model context.
+- Download table data as CSV or Excel-compatible `.xls` files whose headers
+  match the screen, starting with the workspace, report, or semantic model
+  they belong to.
 - Browse and execute every operation published by FastAPI OpenAPI from the
   in-application API reference under the header's Documents menu.
 
@@ -466,6 +513,7 @@ takes effect after the dev server restarts.
 | `npx playwright test` | Run all Playwright browser tests. |
 | `npx playwright test tests/report-lineage.spec.ts` | Run only report-lineage desktop/mobile coverage. |
 | `npx playwright test tests/impact-analysis.spec.ts` | Run only table-impact/measure-impact coverage. |
+| `npx playwright test tests/database-mapping.spec.ts` | Run only Explorer's Database mapping section coverage. |
 | `npx playwright test tests/scanner.spec.ts` | Run only Scanner page and Explorer scan-panel coverage. |
 | `npx playwright test tests/app-shell.spec.ts` | Run desktop/tablet/mobile shell, collapsible navigation, and floating Power AI layout coverage. |
 | `npx playwright test tests/power-ai.spec.ts` | Run Power AI status, context, chat transport, evidence, error, and responsive-state coverage. |
@@ -550,8 +598,8 @@ Home
   -> Explorer
        -> workspace
        -> report
-       -> page details / source DB lineage / semantic objects /
-          semantic-DB mappings / report visuals
+       -> pages / data sources / semantic objects /
+          database mapping / visual fields
   -> Report Lineage
        -> report selected across the whole estate
        -> the same five report sections Explorer shows
@@ -637,8 +685,8 @@ grouped by workspace. The sections sit side by side on large screens and
 stack vertically on phones. Each has a count and a filter box; a filter that
 matches a workspace name keeps that workspace's whole group. Every item is a
 link built with `explorerHref`: a workspace opens Explorer on it, a report
-opens the Reports tab on that report, and a semantic model opens the Semantic
-objects section of a report bound to it.
+opens the Report details tab on that report, and a semantic model opens the
+Semantic objects section of a report connected to it.
 
 A failed workspace list shows `PowerBiAuthRequired`. A failed estate discovery
 leaves the Workspaces tile and list working, shows "—" for the other two
@@ -654,11 +702,11 @@ identity. IDs appear below selected names only as supporting technical context.
 
 Major levels:
 
-1. **Assets & access** — the workspace's reports, semantic models, and (after
-   an explicit scan) dashboards, app linkage, and ownership.
-2. **Reports** — one report selected once, then four sections against it:
-   1. Page details.
-   2. Source DB lineage: every physical table/view backing the selected
+1. **Workspace content** — the workspace's reports, semantic models, and (after
+   an explicit scan) dashboards, the apps using the workspace, and owners.
+2. **Report details** — one report selected once, then five sections against it:
+   1. Pages.
+   2. Data sources: every physical table/view backing the selected
       report's semantic model, one row per table, with tables whose source
       could not be traced (`source_object_type: "unknown"`) listed as
       unresolved rather than omitted — plus an inline Snowflake trace panel
@@ -666,17 +714,18 @@ Major levels:
    3. Semantic objects: tables, columns, measures, and hierarchies for the
       model the report is bound to, with their DAX expressions. No model
       picker — several models, if returned, share one grid.
-   4. Semantic - DB objects mappings: every semantic object joined to its
-      `sourceColumn` and fully qualified `sourceTable`, plus an inline Power AI
-      panel that writes a downloadable definition of any measure.
-   5. Report visuals: visual field references matched to the bound semantic
-      model.
+   4. Database mapping: every semantic object joined to the database columns
+      and database tables it reads, plus an inline Power AI panel that writes a
+      downloadable definition of any measure and a Snowflake column trace.
+   5. Visual fields: each field used in a visual, matched to its semantic
+      object and followed through DAX to the database columns and tables it
+      reads.
 
 Explorer also accepts deep links. It reads `?workspace=<id>`, `?report=<id>`,
 and `?model=<id>` once, on mount, to seed its first selection: a report opens
-the Reports tab on that report, and a model opens the Reports tab's Semantic
-objects section on the first report in that workspace bound to the model, or
-Assets & access when none is. Later selections do not rewrite the URL, an
+the Report details tab on that report, and a model opens that tab's Semantic
+objects section on the first report in that workspace connected to the model,
+or Workspace content when none is. Later selections do not rewrite the URL, an
 unknown ID falls back to the usual first-item defaults, and without params
 Explorer behaves as before.
 
@@ -702,14 +751,14 @@ A report can use a semantic model from another workspace. Never substitute the
 report workspace ID for the model workspace ID unless estate evidence confirms
 the model is local.
 
-Source DB lineage calls the same `/api/v1/explorer/*` bulk endpoint Table
+Data sources calls the same `/api/v1/explorer/*` bulk endpoint Table
 Impact and Measure Impact already use elsewhere, but scoped to the single
 selected report rather than batched across a workspace. It defaults to
 `include_gateway_sources: false`; checking "Include gateway sources"
 re-fetches with the flag set to `true` — that costs real gateway-admin
 lookups, so it is never default-on.
 
-The Assets & access tab's dashboards, app linkage, and ownership sections are
+The Workspace content tab's dashboards, apps, and ownership sections are
 empty until the operator explicitly runs a metadata scan for the selected
 workspace (see Scanner Data Flow) — this is never triggered automatically.
 
@@ -724,7 +773,7 @@ and the exports are identical, and the granularity stays exactly one report.
 
 1. `GET /api/v1/lineage/estate/discover?top=5000&skip=0` returns reports from
    all accessible workspaces plus graph bindings.
-2. The selector displays `report name - workspace name` and shows the report ID
+2. The selector displays `Report name (Workspace name)` and shows the report ID
    after selection. The estate graph's own report-to-model edge resolves which
    workspace the bound semantic model actually lives in.
 3. The selected report is handed to `ReportEvidence` as a `ReportBinding`, which
@@ -734,11 +783,11 @@ Sections, and the endpoint behind each:
 
 | Section | Endpoint |
 | --- | --- |
-| Page details | `GET .../reports/{id}` and `GET .../reports/{id}/pages` |
-| Source DB lineage | `POST /explorer/report-source-tables`, plus `POST /lineage/snowflake/trace` for a selected table |
+| Pages | `GET .../reports/{id}` and `GET .../reports/{id}/pages` |
+| Data sources | `POST /explorer/report-source-tables`, plus `POST /lineage/snowflake/trace` for a selected table |
 | Semantic objects | `POST /explorer/semantic-model-objects` and `GET .../semantic-models/{id}/metadata` |
-| Semantic - DB objects mappings | `POST /explorer/snapshot`, plus `POST /ai/explain` and a column-level `POST /lineage/snowflake/trace` |
-| Report visuals | `POST .../definition/normalized`, `POST .../semantic-lineage`, `POST .../definition/parsed` |
+| Database mapping | `POST /explorer/snapshot`, plus `POST /ai/explain` and a column-level `POST /lineage/snowflake/trace` |
+| Visual fields | `POST .../definition/normalized`, `POST .../semantic-lineage`, `POST .../definition/parsed` |
 
 ## Lineage Diagram Engine
 
@@ -895,10 +944,10 @@ whole, and traversal is always downstream.
    W workspaces", plus any skipped models, and offers **Refresh inventory**.
 2. **One search, two groups.** A single **Tables** search
    (`MultiObjectSearch` in `impact-picker.tsx`, placeholder "Search semantic
-   model or database tables...") lists every table in two separate groups.
+   tables or database tables...") lists every table in two separate groups.
    They sit side by side on wider screens and stack on phones, and each
    heading shows its match count:
-   - **Semantic model tables**: every parsed table, labeled
+   - **Semantic tables**: every parsed table, labeled
      table · semantic model · workspace, plus `from <source>` when its
      definition names a physical source.
    - **Database tables**: every distinct physical `source_path` on a parsed
@@ -916,7 +965,7 @@ whole, and traversal is always downstream.
    matches, with a "refine your search" note past that. Clicking an entry
    toggles it and leaves the list open, so several tables can be picked in a
    row. **Clear** empties the selection and **Done** closes the list. Picks
-   appear under the box as removable chips tagged "Model" or "Database" (list
+   appear under the box as removable chips tagged "Semantic" or "Database" (list
    "Selected tables", buttons `Remove <chip text>`). A semantic chip reads
    `Table (Model)` (`SearchEntry.chipText`), so the same table name in two
    models stays distinguishable; a database chip shows its path. When a
@@ -942,28 +991,32 @@ whole, and traversal is always downstream.
    `fetchBatchedExplorer` (see Impact Evidence And Graph). The evidence is
    joined to the downstream DAX closure of every column and measure of the
    selected tables. A report or visual uses the selection when a visual reads
-   one of a selected table's own columns or measures ("Reads table fields")
-   or any object in its downstream closure ("Through measures").
+   one of a selected table's own columns or measures ("Uses it directly")
+   or any object in its downstream closure ("Through a measure").
 6. **Results.** Two status bands report whether exact DAX dependencies are
    ready and how far the visual evidence reached. While estate discovery
    loads, the evidence band says it is finding the bound reports rather than
-   flashing "no reports bound". Four summary tiles count Reports, Visuals,
-   Semantic models, and Measures. The impact graph comes next (see
+   flashing that no report is connected. Four summary tiles count Reports,
+   Visuals, Semantic models, and Impacted measures. The impact graph comes next (see
    Impact Evidence And Graph). It covers every model in the selection and is
-   titled `<Table> impact` for one table or `Impact of N tables` otherwise.
+   titled `<Table> impact` for one table or `Impact of N semantic tables`
+   otherwise.
    Four `ImpactGrid`s follow. Each grid shrinks to fit its rows (`fitRows`)
-   and has **Copy table**, **CSV**, **Excel**, and per-cell copy. Every copy
-   and export starts with a `selected_tables` column listing the picks. Files
-   are named `table-impact-reports`, `table-impact-visuals`,
-   `table-impact-semantic-models`, and `table-impact-measures`, because a
-   selection can span models.
+   and has **Copy table**, **CSV**, **Excel**, and per-cell copy. Copies and
+   exports use the on-screen headers with every ID last. Each grid has its
+   own Selected tables column naming the picks behind each row, so the
+   selection is not repeated as a context column. Files are named
+   `table-impact-<table>-<grid>` after the one picked table (semantic or
+   database), or `table-impact-multiple-tables-<grid>` when several are
+   picked; the grids are `reports`, `visuals`, `semantic-models`, and
+   `measures`.
 
    | Grid | Columns on screen | Also in copies and exports |
    | --- | --- | --- |
-   | Reports using the selected tables | Report, Workspace, Semantic model, Selected tables, Usage, Pages, Visuals, Objects used | Report ID, Semantic model ID |
-   | Visuals using the selected tables | Visual, Visual type, Page, Report, Workspace, Usage, Fields used | Selected tables, Report ID, Visual key |
-   | Semantic models | Semantic model, Workspace, Selected tables, Database tables, Measures, Reports using, Reports bound | Semantic model ID, Workspace ID |
-   | Measures using the selected tables | Measure, Semantic model, Workspace, Selected tables, Relationship (Direct at depth 1, otherwise Transitive), Depth, DAX reference, Reports, Visuals | Semantic model ID |
+   | Reports using the selected tables | Report name, Workspace name, Semantic model, Selected tables, How it is used, Number of pages, Number of visuals, Objects used | Report ID, Semantic model ID |
+   | Visuals using the selected tables | Visual name, Visual type, Page name, Report name, Workspace name, How it is used, Objects used, Selected tables | Report ID, Visual ID |
+   | Semantic models | Semantic model, Workspace name, Selected tables, Database tables, Number of impacted measures, Number of reports using it, Number of connected reports | Semantic model ID, Workspace ID |
+   | Measures using the selected tables | Measure name, Semantic table, Semantic model, Workspace name, Selected tables, Dependency (Direct at 1 step, otherwise Indirect), Steps away, Referenced as, Number of reports, Number of visuals | Semantic model ID |
 
 7. **Power AI.** When the resolved selection is exactly one semantic table,
    **Ask Power AI** appears, that table becomes the Power AI context, and the
@@ -994,8 +1047,8 @@ shows it or an impacted measure.
    every accessible workspace checked by default) and `fetchEstateInventory`
    (`estateInventoryKey`, the same entry Table Impact uses at the
    all-workspaces default) populate one searchable "Measure" combobox
-   (`ObjectSearchSelect`, entries labeled `Table[Measure]` with model and
-   workspace beneath). The first indexed measure is selected automatically.
+   (`ObjectSearchSelect`, entries labeled with the measure name, and its
+   semantic table, semantic model, and workspace beneath). The first indexed measure is selected automatically.
    A status bar counts indexed measures and skipped models and offers
    **Refresh inventory**.
 2. **DAX closure.** One `POST /api/v1/lineage/dax/analyze` query for the
@@ -1008,10 +1061,10 @@ shows it or an impacted measure.
    selected, and the model's bound reports go to
    `POST /api/v1/explorer/visual-source-lookup` (see Impact Evidence And
    Graph). A report or visual uses the measure when a visual shows the
-   measure itself ("Shows the measure") or anything in its downstream
-   closure ("Through impacted measures").
+   measure itself ("Uses it directly") or anything in its downstream
+   closure ("Through a measure").
 4. **Results.** The exact-DAX and evidence status bands, then five tiles:
-   Tables, Measures impacted, Semantic models, Reports, and Visuals. **Ask
+   Semantic tables, Impacted measures, Semantic models, Reports, and Visuals. **Ask
    Power AI** ("Explain this measure") sends the measure as context. The
    impact graph shows the database tables and semantic model feeding the
    tables and columns the measure reads, the measure itself (focal), the
@@ -1021,21 +1074,23 @@ shows it or an impacted measure.
 
    | Grid | What it lists | Columns on screen | Also in copies and exports |
    | --- | --- | --- | --- |
-   | Tables | The measure's home table, the tables whose columns and measures it reads, and the tables holding measures or calculated columns that depend on it, with the database tables behind each ("Not reported" when the definition names none) | Table, Relationship (Home table, Read by the measure, Holds impacted measures, Holds impacted calculations), Objects, Database tables, Semantic model | Workspace |
-   | Measures impacted by `<measure>` | Every measure that reads it, directly or through another calculation, with the reports and visuals showing each | Measure, Relationship (Direct at depth 1, otherwise Transitive), Depth, DAX reference, Reports, Visuals | — |
-   | Semantic model | The model holding the measure and how much of it the measure reaches | Semantic model, Workspace, Home table, Measures impacted, Calculated columns impacted, Reports using, Visuals using, Reports bound | Semantic model ID, Workspace ID |
-   | Reports | Reports with a visual that shows the measure or something built on it | Report, Workspace, Usage, Pages, Visuals, Measures shown | Report ID |
-   | Visuals | Every such visual, with its page and report | Visual, Visual type, Page, Report, Workspace, Usage, Fields used | Report ID, Visual key |
-   | Inputs `<measure>` reads | The columns and measures it depends on, with the database table behind each plain column | Object, Type, Relationship, Depth, DAX reference, Database table | — |
+   | Semantic tables | The measure's own table, the tables whose columns and measures it reads, and the tables holding measures or calculated columns that depend on it, with the database tables behind each ("Not available" when the definition names none) | Semantic table, Connection to the measure (Holds the measure, Read by the measure, Holds impacted measures, Holds impacted calculations), Objects involved, Database tables, Semantic model | Workspace name |
+   | Measures impacted by `<measure>` | Every measure that reads it, directly or through another calculation, with the reports and visuals showing each | Measure name, Semantic table, Dependency (Direct at 1 step, otherwise Indirect), Steps away, Referenced as, Number of reports, Number of visuals | — |
+   | Semantic model | The model holding the measure and how much of it the measure reaches | Semantic model, Workspace name, Measure's semantic table, Number of impacted measures, Number of impacted calculated columns, Number of reports using it, Number of visuals using it, Number of connected reports | Semantic model ID, Workspace ID |
+   | Reports | Reports with a visual that shows the measure or something built on it | Report name, Workspace name, How it is used, Number of pages, Number of visuals, Objects used | Report ID |
+   | Visuals | Every such visual, with its page and report | Visual name, Visual type, Page name, Report name, Workspace name, How it is used, Objects used | Report ID, Visual ID |
+   | Inputs `<measure>` reads | The columns and measures it depends on, with the database table behind each plain column ("Not applicable" for measures and calculations) | Object name, Semantic table, Object type, Dependency, Steps away, Referenced as, Database table | — |
 
-   Copies and exports prepend `parent_workspace_name`, `parent_workspace_id`,
-   `parent_semantic_model_name`, `parent_semantic_model_id`, and
-   `parent_measure`. Files are named from the model and measure:
-   `<model>-<measure>-tables`, `-impacted-measures`, `-semantic-model`,
-   `-reports`, `-visuals`, and `-inputs`.
+   Copies and exports start with the context columns Workspace name,
+   Semantic model, and Selected measure (each left out when the grid already
+   has that column) and end with Workspace ID and Semantic model ID. The
+   Reports and Visuals files leave the measure's workspace out, because each
+   row already carries its report's own workspace. Files are named
+   `measure-impact-<measure>-<grid>`: `semantic-tables`, `impacted-measures`,
+   `semantic-model`, `reports`, `visuals`, and `inputs`.
 5. **Degradation.** When exact DAX analysis fails, a warning says so, the
-   Tables grid keeps only the home table, and the Measures impacted and
-   Inputs grids say the analysis is unavailable; visuals that show the
+   Semantic tables grid keeps only the measure's own table, and the impacted
+   measures and Inputs grids say the calculation links could not be loaded; visuals that show the
    measure itself still count. Failed estate discovery, no bound reports,
    and the 300-report cap behave as they do on Table Impact.
 
@@ -1107,9 +1162,10 @@ three-section subset of this — the full field-by-field browser lives only on
 the dedicated Scanner page.
 
 Two surfaces share this same hook and data layer:
-- **Explorer's Assets & access tab** scans only the currently selected
+- **Explorer's Workspace content tab** scans only the currently selected
   workspace and fills in three sections that were previously placeholders:
-  Dashboards, App linkage, and Ownership.
+  Dashboards, Apps using this workspace, and Ownership (Last modified by,
+  Created by, and Configured by).
 - **The dedicated Scanner page** (opened directly at `/workspace/scanner`;
   it is no longer in the workspace sidebar) scans up to 100 workspaces at once and
   browses the fuller payload across all of them: Dashboards, Datasource
@@ -1152,33 +1208,78 @@ operator must still enter IDs and values valid for the connected tenant.
 
 ## Table Copy And Export Rules
 
+Every grid exports through one path, `toExportTable` in
+`app/lib/grid-export.ts`, so screen and file always agree:
+
 - AG Grid enables text selection and per-cell copy controls.
-- `Copy table` creates tab-separated content suitable for spreadsheets and
-  analysis tools.
-- CSV and Excel-compatible exports prepend parent workspace, report, and
-  semantic-model names and IDs.
-- Export filenames use the selected parent object name instead of an internal ID.
-- DAX expressions remain complete in copied/exported data even when visually
-  abbreviated in a cell.
-- Table Impact and Measure Impact share this behavior through a common
-  `ImpactGrid` component and `app/lib/grid-export.ts` helpers, so exports look
-  and behave the same across every table in the application. `ImpactGrid` is
-  keyed by its empty message, because AG Grid reads its no-rows overlay only
-  once; the key rebuilds the grid so "Checking reports..." is replaced by the
-  final no-rows text.
-- Measure Impact follows the name-based rule: its six grids prepend the
-  measure's workspace and semantic model names and IDs plus
-  `parent_measure`, and export as `<model>-<measure>-tables`,
-  `-impacted-measures`, `-semantic-model`, `-reports`, `-visuals`, and
-  `-inputs`.
-- Table Impact is the exception to name-based filenames. Its selection can
-  span models, so its four grids export as `table-impact-reports`,
-  `table-impact-visuals`, `table-impact-semantic-models`, and
-  `table-impact-measures`, with a `selected_tables` context column in place
-  of parent names.
-- Both impact pages' rows carry IDs that appear only in copies and exports,
-  not on screen: report IDs, visual keys, and semantic-model and workspace
-  IDs.
+- **Copy table** writes tab-separated text for spreadsheets; **CSV** writes
+  UTF-8 with a byte-order mark and CRLF line endings; **Excel** writes an
+  Excel-compatible `.xls` HTML table.
+- **Headers are the on-screen headers**, in the standard names from
+  `app/lib/naming.ts`. Columns that exist only in files (IDs) are hidden
+  column definitions with standard names too.
+- **Column order:** context columns first (Workspace name, Report name,
+  Semantic model, Selected tables, Selected measure), then the grid's own
+  columns, then the grid's ID columns, then the context IDs. Every header
+  ending in " ID" is last.
+- **No duplicate headers:** a context column is left out when the grid already
+  has a column of that name, so a file never has two columns called, say,
+  "Workspace name" or "Selected tables".
+- **Missing values** read Not available, Not found, or Not applicable, never
+  `--` or an empty guess. Yes/No columns read Yes, No, or Unknown.
+- **File names** are `<page>-<subject>-<grid>` in lower case:
+  `explorer-<workspace>-reports` (and `-semantic-models`, `-dashboards`,
+  `-owners`), `report-<report>-<grid>` for the five report sections on both
+  Explorer and Report lineage (`pages`, `data-sources`, `semantic-objects`,
+  `database-mapping`, `visual-fields`), `table-impact-<table>-<grid>` or
+  `table-impact-multiple-tables-<grid>`, and `measure-impact-<measure>-<grid>`.
+- DAX expressions remain complete in copied and exported data even when
+  shortened in a cell.
+- `ImpactGrid` is keyed by its empty message, because AG Grid reads its
+  no-rows overlay only once; the key rebuilds the grid so "Checking
+  reports..." is replaced by the final no-rows text.
+
+## Naming Standard
+
+[`Docs/07-column-naming-standard.md`](Docs/07-column-naming-standard.md) is
+the reference for every name on screen and in files: sentence case, object
+first ("Report name", "Visual type"), counts as "Number of …", IDs as
+"<Object> ID", and plain words instead of API terms (connected, not bound;
+Reached through, not via; Steps away, not depth). The document keeps each old
+name beside its standard one.
+
+`app/lib/naming.ts` holds those names in code. Add a new header or value to
+`COLUMN` or `VALUE` there first, then use it in the grid; never type a header
+string inside a page. The Playwright suite asserts the headers and export
+order of every grid it covers, so a drifting name fails a test.
+
+## Buttons And Motion
+
+The interface follows apple.com's interaction style, in the app's teal:
+
+- **Buttons** (`app/components/ui/button.tsx`) are pills with generous side
+  padding. Colour changes ease over 200 ms with `ease-apple`, a click presses
+  the button in slightly (`scale 0.97`, skipped on menu triggers), keyboard
+  focus shows a soft 4 px ring, and a trailing arrow marked
+  `data-icon="inline-end"` leans right on hover. `outline-brand` is the
+  outlined brand pill used beside a filled one.
+- **Hand-built controls** take the same behaviour from
+  `app/lib/interaction-styles.ts`: underlined section tabs, segmented controls
+  (the lineage diagram switcher, the sign-in method, Power AI's audience), and
+  small text and icon actions.
+- **Motion tokens** live in `app/app.css`: `ease-apple`
+  (`cubic-bezier(0.28, 0.11, 0.32, 1)`) for content, `ease-apple-snappy` for
+  controls, and the `animate-rise` / `animate-rise-zoom` entrances. They also
+  drive tw-animate-css, so menus, selects, tooltips, dialogs, and sheets open
+  with the same curve.
+- **Scroll reveal:** `app/components/reveal.tsx` fades sections up the first
+  time they scroll into view (Home's walkthrough grows in from 94%).
+- **Page motion:** Home's headline block rises in line by line; the header is
+  frosted and translucent, with underlines that grow from the centre; each
+  workspace section fades in when opened; the sidebar's current-item marker
+  grows in.
+- **Reduced motion:** every animation is disabled under
+  `prefers-reduced-motion`, and `Reveal` then shows content as-is.
 
 ## State Ownership
 
@@ -1237,6 +1338,7 @@ PBI-Lineage-Frontend/
 |   |-- 04-state-and-api-layer.md
 |   |-- 05-file-reference.md
 |   |-- 06-testing-and-deployment.md
+|   |-- 07-column-naming-standard.md
 |   `-- README.md
 |-- app/
 |   |-- components/
@@ -1282,6 +1384,7 @@ PBI-Lineage-Frontend/
 |   |   |   |-- api-execution-panel.tsx
 |   |   |   |-- auth-required.tsx
 |   |   |   |-- database-setup.tsx
+|   |   |   |-- evidence-ui.tsx
 |   |   |   |-- explorer.tsx
 |   |   |   |-- impact-grid.tsx
 |   |   |   |-- impact-lineage.tsx
@@ -1292,21 +1395,27 @@ PBI-Lineage-Frontend/
 |   |   |   |   |-- lineage-layout.ts
 |   |   |   |   |-- lineage-node.tsx
 |   |   |   |   `-- lineage-types.ts
+|   |   |   |-- measure-ai-definition.tsx
 |   |   |   |-- measure-impact.tsx
 |   |   |   |-- overview.tsx
 |   |   |   |-- power-bi-setup.tsx
+|   |   |   |-- report-evidence.tsx
 |   |   |   |-- report-lineage.tsx
 |   |   |   |-- scanner.tsx
+|   |   |   |-- snowflake-object-lineage.tsx
 |   |   |   |-- table-impact.tsx
 |   |   |   `-- workspace-sidebar.tsx
 |   |   |-- app-footer.tsx
-|   |   `-- app-header.tsx
+|   |   |-- app-header.tsx
+|   |   `-- reveal.tsx
 |   |-- lib/
 |   |   |-- api-catalog.ts
 |   |   |-- dependency-graph.ts
 |   |   |-- grid-export.ts
 |   |   |-- impact-analysis.ts
+|   |   |-- interaction-styles.ts
 |   |   |-- lineage-api.ts
+|   |   |-- naming.ts
 |   |   |-- power-ai-api.ts
 |   |   |-- power-ai-suggestions.ts
 |   |   |-- query-provider.tsx
@@ -1341,10 +1450,12 @@ PBI-Lineage-Frontend/
 |-- tests/
 |   |-- api-documentation.spec.ts
 |   |-- app-shell.spec.ts
+|   |-- database-mapping.spec.ts
 |   |-- home.spec.ts
 |   |-- impact-analysis.spec.ts
 |   |-- navigation.spec.ts
 |   |-- overview.spec.ts
+|   |-- power-ai-units.spec.ts
 |   |-- power-ai.spec.ts
 |   |-- report-lineage.spec.ts
 |   |-- scanner.spec.ts
@@ -1399,9 +1510,9 @@ PBI-Lineage-Frontend/
 | --- | --- |
 | `app/routes.ts` | Declares the Home index, `/setup-guide`, and optional workspace section route in React Router Framework Mode. |
 | `app/root.tsx` | Creates the HTML shell, links the tab icons (`favicon.ico` first, then the 512 px `tab_logo.png`), installs QueryProvider and the single global Power AI widget, renders route outlets/scripts, restores scroll, and handles route errors. |
-| `app/app.css` | Imports Tailwind, shadcn, animation, and Geist font styles; defines light/dark design tokens, radii, and global minimum width. `@import "tailwindcss" source(".")` limits Tailwind's class scan to `app/`, so saving Markdown, Python, or test files no longer forces a dev-page reload. |
+| `app/app.css` | Imports Tailwind, shadcn, animation, and Geist font styles; defines light/dark design tokens, radii, global minimum width, the motion tokens (`ease-apple`, `ease-apple-snappy`, `animate-rise`, `animate-rise-zoom`), the `[data-reveal]` scroll-reveal styles, the pointer cursor for every enabled button, and the trailing-arrow hover nudge. `@import "tailwindcss" source(".")` limits Tailwind's class scan to `app/`, so saving Markdown, Python, or test files no longer forces a dev-page reload. |
 | `app/routes/setup-guide.tsx` | Wraps the static setup guide with route metadata plus the shared header and footer. |
-| `app/routes/home.tsx` | Renders `/`: database-neutral product overview, theme-matched animated walkthrough with a reduced-motion poster, evidence path, and the Start exploring / Setup guide actions. |
+| `app/routes/home.tsx` | Renders `/`: a centred hero that rises in line by line, the theme-matched animated walkthrough (with a reduced-motion poster) that grows into place as it scrolls into view, the evidence path cards, the investigation prompts, and the Start exploring / Setup guide actions. |
 | `app/routes/workspace.tsx` | Owns the shared workspace shell, OpenAPI query, endpoint catalog, API executor, sidebar routing, mobile navigation, the full-width (sidebar-free) API reference, and lazy loading for Overview, Explorer, Report Lineage, Table Impact, Measure Impact, and Scanner. |
 
 ### Shared Application Components
@@ -1409,6 +1520,7 @@ PBI-Lineage-Frontend/
 | File | Purpose and fulfilled responsibility |
 | --- | --- |
 | `app/components/app-header.tsx` | Renders product identity (the transparent logo mark with no frame, `tab_logo.png` in light theme and `tab_logo-dark.png` in dark), active Home/Workspace links and the Documents dropdown (Setup guide, API reference), the mobile navigation sheet with its "Documents" group, and an optional TanStack Query backend-health badge. Active state comes from `isApiReferencePath`. Home disables the health request and badge. |
+| `app/components/reveal.tsx` | `Reveal`: fades and lifts its content into place the first time it scrolls into view (optionally staggered, or growing from 94% for large media). It arms before the first paint, so nothing flickers, and shows content as-is under reduced motion or without IntersectionObserver. |
 | `app/components/app-footer.tsx` | Renders the logo mark (light/dark copies) beside the product name, shared navigation, mandatory developer attribution, and current-year copyright on all pages. |
 | `app/components/setup-guide/setup-guide.tsx` | Renders the static, role-oriented Microsoft/Fabric/Scanner/XMLA/Snowflake/backend setup handbook, ordered application handoff, troubleshooting matrix, and authoritative external references. It performs no provider API calls. |
 
@@ -1438,10 +1550,12 @@ PBI-Lineage-Frontend/
 | `app/components/workspace/power-bi-setup.tsx` | Validates and executes device-code/service-principal setup, presents provider readiness, clears secrets, and invalidates identity-dependent caches. |
 | `app/components/workspace/database-setup.tsx` | Validates Snowflake connection input and presents connect/status/logout information without raw setup JSON. |
 | `app/components/workspace/overview.tsx` | Renders `/workspace/overview`: totals of accessible workspaces, reports, and semantic models, then three filterable lists whose items link into Explorer via `explorerHref`. Reads only the shared workspace-list and estate-discovery cache entries and degrades to inline notices when estate discovery fails. |
-| `app/components/workspace/explorer.tsx` | Implements workspace-scoped exploration across two tabs — Assets & access, and Reports (one report picker above the shared `ReportEvidence` sections) — plus an opt-in metadata scan panel for the current workspace's dashboards, app linkage, and ownership. Seeds its first selection once from `?workspace`, `?report`, and `?model`. |
+| `app/components/workspace/explorer.tsx` | Implements workspace-scoped exploration across two tabs — Workspace content, and Report details (one report picker above the shared `ReportEvidence` sections) — plus an opt-in metadata scan panel for the current workspace's dashboards, app linkage, and ownership. Seeds its first selection once from `?workspace`, `?report`, and `?model`. |
 | `app/components/workspace/report-lineage.tsx` | Discovers reports across every accessible workspace, resolves each one's bound semantic model (including a model owned by another workspace) from the estate graph, and renders the shared `ReportEvidence` sections for the selected report. |
-| `app/components/workspace/report-evidence.tsx` | The five report-scoped views — Page details, Source DB lineage, Semantic objects, Semantic - DB objects mappings, Report visuals — with their section tabs and every call behind them. Shared by Explorer and Report Lineage so both screens stay identical below the report picker. |
-| `app/components/workspace/evidence-ui.tsx` | Shared evidence primitives: the AG Grid wrapper with its copy/CSV/Excel toolbar, the export context helpers, the DAX column, and the loading/empty/warning/error states (including the 401-means-session-gone message). |
+| `app/components/workspace/report-evidence.tsx` | The five report-scoped views — Pages, Data sources, Semantic objects, Database mapping, Visual fields — with their section tabs and every call behind them. Their files are named `report-<report>-<grid>` on both screens. Shared by Explorer and Report Lineage so both screens stay identical below the report picker. |
+| `app/components/workspace/evidence-ui.tsx` | Shared evidence primitives: the AG Grid wrapper with its copy/CSV/Excel toolbar, `makeExportContext` (Workspace name, Report name, Semantic model, and their IDs), the DAX column, and the loading/empty/warning/error states (including the 401-means-session-gone message). |
+| `app/components/workspace/snowflake-object-lineage.tsx` | The Snowflake object (table) and column trace panels under Data sources and Database mapping, their result table, and the upward trace diagram. Builds node names from the database/schema/object parts plus the column once, and picks the highlighted node from the traced dependencies. |
+| `app/components/workspace/measure-ai-definition.tsx` | The Measure definition with Power AI panel under Database mapping: one `POST /api/v1/ai/explain` per measure, rendered in place and downloadable as `.md` or `.txt`. |
 | `app/components/workspace/table-impact.tsx` | Indexes every semantic model table, and the database tables behind them (`source_path` from parsed definitions), across every workspace into one grouped multi-select search. For the selected tables it runs DAX analysis and visual evidence per model, expands database tables to every semantic table sourced from them, and renders status bands, four summary tiles, the impact graph across every selected model, and four exportable grids (reports, visuals, semantic models, measures). |
 | `app/components/workspace/measure-impact.tsx` | Keeps a workspace scope and one measure search, joins the measure's upstream/downstream DAX closure to its model's visual evidence, and renders status bands, five tiles, the impact graph, and six exportable grids: Tables, Measures impacted, Semantic model, Reports, Visuals, and Inputs. |
 | `app/components/workspace/impact-lineage.tsx` | The impact graph both impact pages share. `buildImpactGraph` builds Database table + Semantic model -> Semantic table -> columns -> measures -> Reports -> Visuals, with node IDs namespaced per model and at most 40 reports and 120 visuals. `ImpactLineageDiagram` renders it with the Snowflake table lineage's `LineageDiagram` settings, flowing down, with reports collapsed by default, a legend, and a notice for anything not drawn. |
@@ -1477,7 +1591,9 @@ and collapsible in the same way.
 | `app/lib/scanner-api.ts` | Typed `startScan`/`getScanStatus`/`getScanResult` calls onto `/api/v1/scanner/*` (built on `requestJson`), `DEFAULT_SCAN_FLAGS`, and a full, defensive TypeScript model of Microsoft's real (backend-untyped) GetScanResult payload — every type and field from the official reference page. |
 | `app/lib/workspace-routes.ts` | `WORKSPACE_SECTIONS` (working `/workspace/:section` slugs), `isApiReferencePath` (header active state and the full-width API reference), and `explorerHref` (Explorer deep links used by Overview). |
 | `app/lib/use-workspace-scan.ts` | `useWorkspaceScan` hook: drives the scanner's submit-then-poll-then-fetch workflow via TanStack Query's `refetchInterval`, never runs automatically, and resets when the workspace scope changes. Shared by Explorer's scan panel and the Scanner page. |
-| `app/lib/grid-export.ts` | Shared CSV/Excel/copy-table export helpers (`downloadCsv`, `downloadExcel`, `toTabSeparatedValues`, `withExportContext`) used by `ImpactGrid` and available for reuse by other tables. |
+| `app/lib/grid-export.ts` | The one export path for every grid: `toExportTable` turns rows, column definitions, and context into headers and cells (context names, then grid columns, then grid IDs, then context IDs; a context column the grid already has is left out), and `exportTableToTsv`, `downloadExportCsv` (UTF-8 BOM, CRLF), and `downloadExportExcel` write it. Also `filePart` for file names and `copyText`. |
+| `app/lib/naming.ts` | The naming glossary from `Docs/07-column-naming-standard.md`: `COLUMN` headers, `VALUE` display values, `yesNo`, `dependencyLabel`, the report type/format, storage mode, and object type translators, `nameWithParent`, and the `gridColumn`/`exportOnlyColumn` column helpers. Add a header here before a grid uses it. |
+| `app/lib/interaction-styles.ts` | Class helpers that give hand-built controls the Button's motion: `sectionTabClass` (underlined section tabs), `segmentGroupClass`/`segmentClass` (segmented controls), `textActionClass`, and `iconActionClass`. |
 | `app/lib/use-api-executor.ts` | Executes a catalog endpoint with path/query/header values, cookies, optional ephemeral key, JSON body handling, timing, headers, and normalized failure results. |
 | `app/lib/power-ai-api.ts` | Canonical Power AI wire types plus status, non-streaming chat, SSE streaming, cancellation, and normalized error handling for `/api/v1/ai/*`. |
 | `app/lib/power-ai-suggestions.ts` | Produces safe route/object-aware starter questions without generating factual answers. |
@@ -1497,7 +1613,7 @@ in feature components and primitive behavior/styling here.
 | File | Purpose and fulfilled responsibility |
 | --- | --- |
 | `app/components/ui/badge.tsx` | Compact status/category labels. |
-| `app/components/ui/button.tsx` | Button variants, sizes, and rendered-link/button behavior. |
+| `app/components/ui/button.tsx` | Pill-shaped button variants (`default`, `outline`, `outline-brand`, `secondary`, `ghost`, `destructive`, `link`) and sizes, eased colour changes, a slight press-in (skipped on menu triggers), a soft focus ring, and rendered-link/button behavior. |
 | `app/components/ui/card.tsx` | Small framed content surfaces used where information is genuinely grouped. |
 | `app/components/ui/checkbox.tsx` | Accessible binary checkbox control. |
 | `app/components/ui/command.tsx` | Command/search list composition based on cmdk. |
@@ -1525,12 +1641,14 @@ packages, so retaining it caused clean-clone and GitHub TypeScript failures.
 
 | File | Purpose and fulfilled responsibility |
 | --- | --- |
-| `tests/report-lineage.spec.ts` | Mocks backend contracts and verifies evidence tabs, exports, report/column/calculation graphs, desktop layout, and mobile containment. |
-| `tests/impact-analysis.spec.ts` | Mocks a two-workspace, two-model backend fixture and verifies Table Impact's grouped multi-select table search and multi-model results, Measure Impact's workspace scope and measure search, the impact graphs, impact grids, and evidence status, including failed estate discovery. |
+| `tests/report-lineage.spec.ts` | Mocks backend contracts and verifies the five report sections, their standard export headers and order, that the replaced section names are gone, the Snowflake table and column traces (including that a traced column is never drawn as a detached node), desktop layout, and mobile containment. |
+| `tests/database-mapping.spec.ts` | Verifies Explorer's Database mapping section: the snapshot request waits until the section opens and keeps gateway lookups off until opted in, each semantic object's database columns and tables, the Not found / Not available / Not applicable values, the export headers and file name, the panels it feeds, and the error state. |
+| `tests/impact-analysis.spec.ts` | Mocks a two-workspace, two-model backend fixture and verifies Table Impact's grouped multi-select table search and multi-model results, Measure Impact's workspace scope and measure search, the impact graphs, every grid's standard headers, values, and export order, the file names, and the status bands, including a failed list of reports. |
 | `tests/scanner.spec.ts` | Mocks the four `/api/v1/scanner/*` endpoints (including a status route that reports "Running" before "Succeeded", proving the poll loop works) against a fixture covering every entity type, and verifies both the dedicated Scanner page's multi-workspace scan-and-browse flow across all five tabs and Explorer's single-workspace scan panel replacing its dashboards/app-linkage/ownership placeholders. |
 | `tests/api-documentation.spec.ts` | Mocks OpenAPI/backend operations and verifies GET/POST execution, JSON validation, response metadata, and output copying behavior. |
 | `tests/app-shell.spec.ts` | Verifies desktop navigation persistence, tablet icon rail behavior, mobile drawers, and the non-resizing floating Power AI overlay. |
 | `tests/power-ai.spec.ts` | Verifies availability states, Power BI auth/permission locks, persona persistence, object context, SSE/non-SSE chat, cancellation, evidence, friendly errors, and responsive conversation continuity. |
+| `tests/power-ai-units.spec.ts` | Runs the pure Power AI answer modules (answer parsing, section tabs, entity chips, DAX highlighting, lineage layers) directly in Playwright's Node process, with no page. |
 | `tests/home.spec.ts` | Verifies the Home route, the Start exploring and Setup guide actions, database-neutral copy, no Home health request, the walkthrough image, header navigation including the Documents menu, and desktop/mobile containment. |
 | `tests/navigation.spec.ts` | Verifies the header's Home/Workspace/Documents navigation, the grouped mobile sheet, and the workspace sidebar's items. |
 | `tests/overview.spec.ts` | Verifies Overview totals, the three linked sections and their filters, Explorer deep links, and the estate-discovery failure state. |
@@ -1858,10 +1976,16 @@ requests to `/index.html` after the API proxy rule.
   creator/last-editor/configuring identities.
 - Orval, Vitest, and React Testing Library are installed but generated clients
   and focused unit/component suites are not yet committed.
-- Explorer has no dedicated Playwright spec (`tests/explorer.spec.ts` does not
-  exist). Its two-tab layout and Source DB lineage section were verified
-  manually against both a mocked and a live backend during development but
-  have no committed browser coverage.
+- Explorer has no spec of its own for its tab layout (`tests/explorer.spec.ts`
+  does not exist). Its Database mapping section is covered by
+  `tests/database-mapping.spec.ts`, its report sections through Report
+  lineage (they are the same component), its deep links by
+  `tests/overview.spec.ts`, and its scan panel by `tests/scanner.spec.ts`.
+- The Measure impact graph also links reports that use the measure's inputs.
+  For example, a visual that reads only `Sales[Amount]` is drawn under a
+  report even though it is not affected by `Sales[Total Sales]`. The Reports
+  and Visuals grids are correct. `tests/impact-analysis.spec.ts` flags this
+  with soft checks, so that test fails until the graph is fixed.
 - Table Impact and Measure Impact compute cross-report/visual evidence from at
   most the first 300 reports bound to a semantic model (a visible notice
   appears if that cap is reached). Table Impact applies the cap to each model
@@ -1877,7 +2001,7 @@ requests to `/index.html` after the API proxy rule.
 - Table Impact and Measure Impact know a database table only through the
   `source_path` values in parsed semantic model definitions. A semantic table
   whose definition reports no source adds no database-table entry, and its
-  Database tables cell reads "Not reported".
+  Database tables cell reads "Not available".
 - Scan progress and results are not persisted: navigating away from Explorer
   or the Scanner page and back starts fresh. Scans are also subject to real
   Microsoft tenant hourly limits (30 modified-workspace checks, 500 scan

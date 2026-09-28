@@ -129,7 +129,7 @@ export function DatabaseSetup({
           <Button type="submit" className="mt-5" disabled={isRunning || !catalogReady}>{isRunning ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />} Connect database</Button>
         </form>
         <DatabaseStatus details={details} connected={Boolean(connected)} error={isDatabaseResult ? error : null} isRunning={isRunning} catalogReady={catalogReady} onCheck={() => void execute(SETUP_ENDPOINTS.databaseStatus)} onDisconnect={() => void execute(SETUP_ENDPOINTS.databaseLogout)} />
-        <div className="mt-6 flex justify-end border-t border-zinc-200 pt-5"><Button type="button" variant="outline" onClick={onNext}>Open Explorer <ArrowRight className="size-4" /></Button></div>
+        <div className="mt-6 flex justify-end border-t border-zinc-200 pt-5"><Button type="button" variant="outline" onClick={onNext}>Open Explorer <ArrowRight data-icon="inline-end" className="size-4" /></Button></div>
       </div>
     </section>
   );

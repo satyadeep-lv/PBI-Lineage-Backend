@@ -90,8 +90,8 @@ function NavigationItem({
               aria-label={label}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "flex w-full items-center justify-center rounded-md py-2.5 transition-colors",
-                active ? "bg-sidebar-accent text-fabric" : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                "flex w-full items-center justify-center rounded-xl py-2.5 outline-none transition-[color,background-color,scale] duration-300 ease-apple focus-visible:ring-4 focus-visible:ring-ring/25 active:scale-95",
+                active ? "bg-sidebar-accent text-fabric" : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
               )}
             />
           }
@@ -109,13 +109,14 @@ function NavigationItem({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "relative flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-left text-sm transition-colors",
+        // The brand marker on the left grows in when an item becomes current.
+        "group relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm outline-none transition-[color,background-color,scale] duration-300 ease-apple focus-visible:ring-4 focus-visible:ring-ring/25 active:scale-[0.98] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:origin-center before:rounded-full before:bg-fabric before:transition-transform before:duration-300 before:ease-apple",
         active
-          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-fabric"
-          : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground before:scale-y-100"
+          : "text-muted-foreground before:scale-y-0 hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
       )}
     >
-      <Icon className="size-4 shrink-0" />
+      <Icon className={cn("size-4 shrink-0 transition-colors duration-300 ease-apple", active ? "text-fabric" : "group-hover:text-fabric")} />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {meta && <span className="shrink-0 text-[11px] text-muted-foreground">{meta}</span>}
     </button>
