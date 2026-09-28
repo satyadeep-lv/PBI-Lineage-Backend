@@ -10,9 +10,9 @@ import { PowerBiAuthRequired } from "~/components/workspace/auth-required";
 import { ImpactGrid } from "~/components/workspace/impact-grid";
 import { buildImpactGraph, ImpactLineageDiagram } from "~/components/workspace/impact-lineage";
 import { ObjectSearchSelect, WorkspaceScopeSelect, type SearchEntry } from "~/components/workspace/impact-picker";
-import { EmptyState, EvidenceStatus, ImpactSection, LoadingState, StatusBand, SummaryTile } from "~/components/workspace/impact-ui";
+import { EmptyState, EvidenceStatus, ImpactSection, LoadingState, REPORT_LIST_FAILED_TEXT, StatusBand, SummaryTile } from "~/components/workspace/impact-ui";
 import { canonicalType, computeDependencyClosure, referenceKey, referenceLabel, type ClosureHop, type DaxDependency, type DaxReference } from "~/lib/dependency-graph";
-import type { GridRow } from "~/lib/grid-export";
+import { filePart, type ExportContext, type GridRow } from "~/lib/grid-export";
 import {
   buildEvidenceIndex,
   buildReportNames,
@@ -40,12 +40,23 @@ import {
   type InventoryEntry,
   type ParsedSemanticModel,
 } from "~/lib/lineage-api";
+import { COLUMN, dependencyLabel, gridColumn, VALUE } from "~/lib/naming";
 import { useAppStore } from "~/stores/app-store";
 import { usePowerAiStore } from "~/stores/power-ai-store";
 
 type Workspace = { id: string; name: string };
 type WorkspaceResponse = { workspaces: Workspace[] };
 type DaxAnalysis = { dependencies: DaxDependency[]; dependency_count: number };
+
+/** "Connection to the measure" values in the Semantic tables grid (Docs/07-column-naming-standard.md). */
+const CONNECTION = {
+  holdsMeasure: "Holds the measure",
+  readByMeasure: "Read by the measure",
+  holdsImpactedMeasures: "Holds impacted measures",
+  holdsImpactedCalculations: "Holds impacted calculations",
+} as const;
+
+const plural = (count: number, one: string, many: string) => (count === 1 ? one : many);
 
 /**
  * Pick a measure and see everything it touches: the tables it reads and the
@@ -75,11 +86,12 @@ export function MeasureImpact() {
     enabled: scopeIds.length > 0,
   });
   const measures = useMemo(() => inventoryQuery.data?.measures ?? [], [inventoryQuery.data]);
+  // "Total Sales", then "Sales · Finance Model · Finance": the measure name first, then where it lives.
   const measureEntries: SearchEntry[] = useMemo(() => measures.map((entry) => ({
     key: entry.key,
     searchValue: `${entry.measureName} ${entry.tableName} ${entry.semanticModelName} ${entry.workspaceName}`,
-    primary: `${entry.tableName}[${entry.measureName}]`,
-    secondary: `${entry.semanticModelName} · ${entry.workspaceName}`,
+    primary: entry.measureName ?? "",
+    secondary: `${entry.tableName} · ${entry.semanticModelName} · ${entry.workspaceName}`,
   })), [measures]);
   useEffect(() => {
     if (measures.length && !measures.some((entry) => entry.key === selectedMeasureKey)) setSelectedMeasureKey(measures[0].key);
@@ -130,9 +142,25 @@ export function MeasureImpact() {
     }], reportNames)
     : null), [selectedEntry, seed, selectedModelKey, closure, dependencies, evidence, sourcesByTable, reportNames]);
 
-  const measureLabel = selectedEntry ? `${selectedEntry.tableName}[${selectedEntry.measureName}]` : "";
-  const exportContext = { parent_workspace_name: selectedEntry?.workspaceName ?? "", parent_workspace_id: selectedEntry?.workspaceId ?? "", parent_semantic_model_name: selectedEntry?.semanticModelName ?? "", parent_semantic_model_id: selectedEntry?.semanticModelId ?? "", parent_measure: measureLabel };
-  const filePrefix = `${filePart(selectedEntry?.semanticModelName)}-${filePart(selectedEntry?.measureName)}`;
+  // Measure names are unique within a semantic model, so the plain name is what titles and files show.
+  const measureLabel = selectedEntry?.measureName ?? "";
+  /** Table[Measure]: only the Power AI context uses the DAX-qualified name. */
+  const qualifiedMeasure = selectedEntry ? `${selectedEntry.tableName}[${selectedEntry.measureName}]` : "";
+  const exportContext: ExportContext = {
+    [COLUMN.workspaceName]: selectedEntry?.workspaceName ?? "",
+    [COLUMN.semanticModel]: selectedEntry?.semanticModelName ?? "",
+    [COLUMN.selectedMeasure]: measureLabel,
+    [COLUMN.workspaceId]: selectedEntry?.workspaceId ?? "",
+    [COLUMN.semanticModelId]: selectedEntry?.semanticModelId ?? "",
+  };
+  // Report and visual rows carry their report's own workspace as "Workspace name", so the semantic model's
+  // workspace pair stays out of those files rather than pairing one workspace's name with another's ID.
+  const usageExportContext: ExportContext = {
+    [COLUMN.semanticModel]: selectedEntry?.semanticModelName ?? "",
+    [COLUMN.selectedMeasure]: measureLabel,
+    [COLUMN.semanticModelId]: selectedEntry?.semanticModelId ?? "",
+  };
+  const filePrefix = `measure-impact-${filePart(selectedEntry?.measureName)}`;
 
   useEffect(() => {
     usePowerAiStore.getState().mergeContext({
@@ -155,8 +183,8 @@ export function MeasureImpact() {
   if (!workspaces.length) return <EmptyState title="No Power BI workspaces found" text="The authenticated account did not return any workspaces to explore." />;
 
   const usagePending = evidenceQuery.isLoading || estateQuery.isLoading;
-  const usageEmpty = estateQuery.isError ? "Usage is unavailable because estate discovery failed." : usagePending || daxQuery.isLoading ? "Checking reports..." : undefined;
-  const daxEmpty = daxQuery.isLoading ? "Preparing exact DAX dependencies..." : daxQuery.isError ? "Exact DAX analysis is unavailable for this identity." : undefined;
+  const usageEmpty = estateQuery.isError ? REPORT_LIST_FAILED_TEXT : usagePending || daxQuery.isLoading ? "Checking reports..." : undefined;
+  const daxEmpty = daxQuery.isLoading ? "Finding calculation links..." : daxQuery.isError ? "Calculation links could not be loaded for your account." : undefined;
 
   return <section className="overflow-hidden rounded-lg border border-border bg-surface">
     <div className="border-b border-border px-5 py-5 sm:px-6">
@@ -165,7 +193,7 @@ export function MeasureImpact() {
         <div>
           <div className="mb-1 flex flex-wrap items-center gap-2"><span className="text-xs font-semibold uppercase text-fabric">Power BI</span><Badge className="rounded-md border border-fabric/25 bg-accent text-accent-foreground">Measure impact</Badge></div>
           <h1 className="text-lg font-semibold">Measure impact</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Pick a measure to see the tables it reads and affects, the other measures it impacts, its semantic model, and every report and visual that shows it.</p>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Pick a measure to see the semantic tables it reads and affects, the other measures it impacts, its semantic model, and every report and visual that shows it.</p>
         </div>
       </div>
     </div>
@@ -182,12 +210,12 @@ export function MeasureImpact() {
       {selectedEntry && analysis && impactGraph && <>
         <div className="space-y-2">
           <ExactLineageStatus loading={daxQuery.isLoading} error={daxQuery.isError} dax={daxQuery.data} />
-          <EvidenceStatus estateLoading={estateQuery.isLoading} estateError={estateQuery.isError} boundCount={boundReports.length} loading={evidenceQuery.isLoading} truncated={Boolean(evidenceQuery.data?.truncated)} noBoundText="No reports in the accessible estate are bound to this semantic model." />
+          <EvidenceStatus estateLoading={estateQuery.isLoading} estateError={estateQuery.isError} boundCount={boundReports.length} loading={evidenceQuery.isLoading} truncated={Boolean(evidenceQuery.data?.truncated)} noBoundText="No report you can open is connected to this semantic model." />
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <SummaryTile icon={TableProperties} label="Tables" value={analysis.tableRows.length} caption="Read by it or holding calculations on it" pending={daxQuery.isLoading} />
-          <SummaryTile icon={Sigma} label="Measures impacted" value={analysis.impactedMeasureRows.length} caption="Depending on it, directly or transitively" pending={daxQuery.isLoading} />
+          <SummaryTile icon={TableProperties} label="Semantic tables" value={analysis.tableRows.length} caption="Read by it or holding calculations on it" pending={daxQuery.isLoading} />
+          <SummaryTile icon={Sigma} label="Impacted measures" value={analysis.impactedMeasureRows.length} caption="Depending on it, directly or indirectly" pending={daxQuery.isLoading} />
           <SummaryTile icon={Layers3} label="Semantic models" value={analysis.modelRows.length} caption={selectedEntry.semanticModelName} pending={false} />
           <SummaryTile icon={FileBarChart2} label="Reports" value={analysis.reportRows.length} caption="With a visual showing it or an impacted measure" pending={usagePending} />
           <SummaryTile icon={MonitorPlay} label="Visuals" value={analysis.visualRows.length} caption="Showing it or an impacted measure" pending={usagePending} />
@@ -203,7 +231,7 @@ export function MeasureImpact() {
               semanticModelWorkspaceId: selectedEntry.workspaceId,
               objectType: "measure",
               objectId: selectedEntry.key,
-              objectName: measureLabel,
+              objectName: qualifiedMeasure,
             }}
             question="Explain this measure"
           />
@@ -219,27 +247,27 @@ export function MeasureImpact() {
           hiddenVisuals={impactGraph.hiddenVisuals}
         />
 
-        <ImpactSection icon={TableProperties} title="Tables" text="The measure's home table, the tables whose columns and measures it reads, and the tables holding measures or calculated columns that depend on it.">
-          <ImpactGrid rowData={analysis.tableRows} columnDefs={tableColumnDefs} emptyMessage={daxEmpty ?? "No tables are connected to this measure."} exportFileName={`${filePrefix}-tables`} exportContext={exportContext} fitRows />
+        <ImpactSection icon={TableProperties} title="Semantic tables" text="The semantic table holding the measure, the semantic tables whose columns and measures it reads, and the ones holding measures or calculated columns that depend on it.">
+          <ImpactGrid rowData={analysis.tableRows} columnDefs={tableColumnDefs} emptyMessage={daxEmpty ?? "No semantic tables are connected to this measure."} exportFileName={`${filePrefix}-semantic-tables`} exportContext={exportContext} fitRows />
         </ImpactSection>
 
         <ImpactSection icon={Sigma} title={`Measures impacted by ${measureLabel}`} text="Every measure that reads this measure, directly or through another calculation — each one changes when this measure changes.">
           <ImpactGrid rowData={analysis.impactedMeasureRows} columnDefs={impactedMeasureColumnDefs} emptyMessage={daxEmpty ?? "No other measure depends on this measure."} exportFileName={`${filePrefix}-impacted-measures`} exportContext={exportContext} fitRows />
         </ImpactSection>
 
-        <ImpactSection icon={Layers3} title="Semantic model" text="The semantic model holding the measure, with how much of it the measure impacts and how many bound reports show it.">
-          <ImpactGrid rowData={analysis.modelRows} columnDefs={modelColumnDefs} emptyMessage="The semantic model could not be resolved." exportFileName={`${filePrefix}-semantic-model`} exportContext={exportContext} fitRows />
+        <ImpactSection icon={Layers3} title="Semantic model" text="The semantic model holding the measure, with how much of it the measure impacts and how many connected reports show it.">
+          <ImpactGrid rowData={analysis.modelRows} columnDefs={modelColumnDefs} emptyMessage="The semantic model was not found." exportFileName={`${filePrefix}-semantic-model`} exportContext={exportContext} fitRows />
         </ImpactSection>
 
         <ImpactSection icon={FileBarChart2} title="Reports" text="Reports with at least one visual that shows this measure directly, or shows a measure or calculation that depends on it.">
-          <ImpactGrid rowData={analysis.reportRows} columnDefs={reportColumnDefs} emptyMessage={usageEmpty ?? "No report visual shows this measure or anything depending on it."} exportFileName={`${filePrefix}-reports`} exportContext={exportContext} fitRows />
+          <ImpactGrid rowData={analysis.reportRows} columnDefs={reportColumnDefs} emptyMessage={usageEmpty ?? "No report visual shows this measure or anything depending on it."} exportFileName={`${filePrefix}-reports`} exportContext={usageExportContext} fitRows />
         </ImpactSection>
 
         <ImpactSection icon={MonitorPlay} title="Visuals" text="Every visual showing this measure or an impacted measure, with its page and report.">
-          <ImpactGrid rowData={analysis.visualRows} columnDefs={visualColumnDefs} emptyMessage={usageEmpty ?? "No visual shows this measure or anything depending on it."} exportFileName={`${filePrefix}-visuals`} exportContext={exportContext} fitRows />
+          <ImpactGrid rowData={analysis.visualRows} columnDefs={visualColumnDefs} emptyMessage={usageEmpty ?? "No visual shows this measure or anything depending on it."} exportFileName={`${filePrefix}-visuals`} exportContext={usageExportContext} fitRows />
         </ImpactSection>
 
-        <ImpactSection icon={ArrowUpToLine} title={`Inputs ${measureLabel} reads`} text="Columns and measures this measure depends on, directly or transitively, with the database table behind each column.">
+        <ImpactSection icon={ArrowUpToLine} title={`Inputs ${measureLabel} reads`} text="Columns and measures this measure depends on, directly or indirectly, with the database table behind each column.">
           <ImpactGrid rowData={analysis.inputRows} columnDefs={inputColumnDefs} emptyMessage={daxEmpty ?? "This measure reads no other semantic objects."} exportFileName={`${filePrefix}-inputs`} exportContext={exportContext} fitRows />
         </ImpactSection>
       </>}
@@ -247,63 +275,77 @@ export function MeasureImpact() {
   </section>;
 }
 
+// Row keys are the standard headers (Docs/07-column-naming-standard.md), so screen and export always agree;
+// hidden columns are export-only, and every "… ID" is written last.
 const tableColumnDefs: ColDef<GridRow>[] = [
-  { field: "Table", minWidth: 170 },
-  { field: "Relationship", minWidth: 220, flex: 1 },
-  { field: "Objects", minWidth: 240, flex: 1 },
-  { field: "Database tables", minWidth: 220, flex: 1 },
-  { field: "Semantic model", minWidth: 160 },
+  gridColumn(COLUMN.semanticTable, { minWidth: 170 }),
+  gridColumn(COLUMN.connectionToMeasure, { minWidth: 240, flex: 1 }),
+  gridColumn(COLUMN.objectsInvolved, { minWidth: 240, flex: 1 }),
+  gridColumn(COLUMN.databaseTables, { minWidth: 220, flex: 1 }),
+  gridColumn(COLUMN.semanticModel, { minWidth: 170 }),
+  gridColumn(COLUMN.workspaceName, { hide: true }),
 ];
 
 const impactedMeasureColumnDefs: ColDef<GridRow>[] = [
-  { field: "Measure", minWidth: 200, flex: 1 },
-  { field: "Relationship", minWidth: 130 },
-  { field: "Depth", minWidth: 90 },
-  { field: "DAX reference", minWidth: 220, flex: 1 },
-  { field: "Reports", minWidth: 100 },
-  { field: "Visuals", minWidth: 100 },
+  gridColumn(COLUMN.measureName, { minWidth: 200, flex: 1 }),
+  gridColumn(COLUMN.semanticTable, { minWidth: 160 }),
+  gridColumn(COLUMN.dependency, { minWidth: 130 }),
+  gridColumn(COLUMN.stepsAway, { minWidth: 120 }),
+  gridColumn(COLUMN.referencedAs, { minWidth: 220, flex: 1 }),
+  gridColumn(COLUMN.reportCount, { minWidth: 170 }),
+  gridColumn(COLUMN.visualCount, { minWidth: 170 }),
 ];
 
 const modelColumnDefs: ColDef<GridRow>[] = [
-  { field: "Semantic model", minWidth: 190, flex: 1 },
-  { field: "Workspace", minWidth: 150 },
-  { field: "Home table", minWidth: 150 },
-  { field: "Measures impacted", minWidth: 150 },
-  { field: "Calculated columns impacted", minWidth: 200 },
-  { field: "Reports using", minWidth: 130 },
-  { field: "Visuals using", minWidth: 130 },
-  { field: "Reports bound", minWidth: 130 },
+  gridColumn(COLUMN.semanticModel, { minWidth: 190, flex: 1 }),
+  gridColumn(COLUMN.workspaceName, { minWidth: 160 }),
+  gridColumn(COLUMN.measuresSemanticTable, { minWidth: 230 }),
+  gridColumn(COLUMN.impactedMeasureCount, { minWidth: 250 }),
+  gridColumn(COLUMN.impactedCalculatedColumnCount, { minWidth: 320 }),
+  gridColumn(COLUMN.reportsUsingCount, { minWidth: 240 }),
+  gridColumn(COLUMN.visualsUsingCount, { minWidth: 240 }),
+  gridColumn(COLUMN.connectedReportCount, { minWidth: 250 }),
+  gridColumn(COLUMN.semanticModelId, { hide: true }),
+  gridColumn(COLUMN.workspaceId, { hide: true }),
 ];
 
 const reportColumnDefs: ColDef<GridRow>[] = [
-  { field: "Report", minWidth: 200, flex: 1.2 },
-  { field: "Workspace", minWidth: 150 },
-  { field: "Usage", minWidth: 200 },
-  { field: "Pages", minWidth: 90 },
-  { field: "Visuals", minWidth: 100 },
-  { field: "Measures shown", minWidth: 240, flex: 1 },
+  gridColumn(COLUMN.reportName, { minWidth: 200, flex: 1.2 }),
+  gridColumn(COLUMN.workspaceName, { minWidth: 160 }),
+  gridColumn(COLUMN.howItIsUsed, { minWidth: 170 }),
+  gridColumn(COLUMN.pageCount, { minWidth: 160 }),
+  gridColumn(COLUMN.visualCount, { minWidth: 170 }),
+  gridColumn(COLUMN.objectsUsed, { minWidth: 240, flex: 1 }),
+  gridColumn(COLUMN.reportId, { hide: true }),
 ];
 
 const visualColumnDefs: ColDef<GridRow>[] = [
-  { field: "Visual", minWidth: 190, flex: 1 },
-  { field: "Visual type", minWidth: 140 },
-  { field: "Page", minWidth: 150 },
-  { field: "Report", minWidth: 180 },
-  { field: "Workspace", minWidth: 150 },
-  { field: "Usage", minWidth: 200 },
-  { field: "Fields used", minWidth: 220, flex: 1 },
+  gridColumn(COLUMN.visualName, { minWidth: 190, flex: 1 }),
+  gridColumn(COLUMN.visualType, { minWidth: 140 }),
+  gridColumn(COLUMN.pageName, { minWidth: 150 }),
+  gridColumn(COLUMN.reportName, { minWidth: 180 }),
+  gridColumn(COLUMN.workspaceName, { minWidth: 160 }),
+  gridColumn(COLUMN.howItIsUsed, { minWidth: 170 }),
+  gridColumn(COLUMN.objectsUsed, { minWidth: 220, flex: 1 }),
+  gridColumn(COLUMN.reportId, { hide: true }),
+  gridColumn(COLUMN.visualId, { hide: true }),
 ];
 
 const inputColumnDefs: ColDef<GridRow>[] = [
-  { field: "Object", minWidth: 200, flex: 1 },
-  { field: "Type", minWidth: 140 },
-  { field: "Relationship", minWidth: 130 },
-  { field: "Depth", minWidth: 90 },
-  { field: "DAX reference", minWidth: 220, flex: 1 },
-  { field: "Database table", minWidth: 220 },
+  gridColumn(COLUMN.objectName, { minWidth: 200, flex: 1 }),
+  gridColumn(COLUMN.semanticTable, { minWidth: 160 }),
+  gridColumn(COLUMN.objectType, { minWidth: 150 }),
+  gridColumn(COLUMN.dependency, { minWidth: 130 }),
+  gridColumn(COLUMN.stepsAway, { minWidth: 120 }),
+  gridColumn(COLUMN.referencedAs, { minWidth: 220, flex: 1 }),
+  gridColumn(COLUMN.databaseTable, { minWidth: 220 }),
 ];
 
 type TableAccumulator = { roles: Set<string>; objects: Set<string> };
+
+const howItIsUsed = (direct: boolean) => (direct ? VALUE.usesDirectly : VALUE.throughMeasure);
+/** Steps away, then Table[Name]: the order the grids had before the name was split from its semantic table. */
+const byStepsThenName = (a: ClosureHop, b: ClosureHop) => a.depth - b.depth || referenceLabel(a.reference).localeCompare(referenceLabel(b.reference));
 
 /** Joins the measure's closure to its model's tables and to bound-report visual evidence. */
 function analyzeMeasure(
@@ -328,49 +370,53 @@ function analyzeMeasure(
     if (object) table.objects.add(object);
     tables.set(name, table);
   };
-  noteTable(entry.tableName, "Home table", measureName);
-  upstream.forEach((hop) => noteTable(hop.reference.table_name, "Read by the measure", referenceLabel(hop.reference)));
+  noteTable(entry.tableName, CONNECTION.holdsMeasure, measureName);
+  upstream.forEach((hop) => noteTable(hop.reference.table_name, CONNECTION.readByMeasure, referenceLabel(hop.reference)));
   downstream.forEach((hop) => {
     const type = canonicalType(hop.reference.object_type);
-    noteTable(hop.reference.table_name, type === "measure" ? "Holds impacted measures" : "Holds impacted calculations", referenceLabel(hop.reference));
+    noteTable(hop.reference.table_name, type === "measure" ? CONNECTION.holdsImpactedMeasures : CONNECTION.holdsImpactedCalculations, referenceLabel(hop.reference));
   });
   const tableRows: GridRow[] = [...tables.entries()].map(([name, table]) => ({
     id: `table-${name}`,
-    Table: name,
-    Relationship: [...table.roles].join(", "),
-    Objects: [...table.objects].join(", "),
-    "Database tables": (sourcesByTable.get(name) ?? []).join(", ") || (parsedModel?.tables.some((candidate) => candidate.name === name) ? "Not reported" : "--"),
-    "Semantic model": entry.semanticModelName,
-    Workspace: entry.workspaceName,
+    [COLUMN.semanticTable]: name,
+    [COLUMN.connectionToMeasure]: [...table.roles].join(", "),
+    [COLUMN.objectsInvolved]: [...table.objects].join(", "),
+    // No source path in the definition: not available; a table the definition does not hold: not found.
+    [COLUMN.databaseTables]: (sourcesByTable.get(name) ?? []).join(", ") || (parsedModel?.tables.some((candidate) => candidate.name === name) ? VALUE.notAvailable : VALUE.notFound),
+    [COLUMN.semanticModel]: entry.semanticModelName,
+    [COLUMN.workspaceName]: entry.workspaceName,
   }));
 
   const impactedMeasureRows: GridRow[] = downstream
     .filter((hop) => canonicalType(hop.reference.object_type) === "measure")
+    .sort(byStepsThenName)
     .map((hop) => {
       const usage = usageOf(hop.reference);
       return {
         id: `impacted-${referenceKey(hop.reference)}`,
-        Measure: referenceLabel(hop.reference),
-        Relationship: hop.depth === 1 ? "Direct" : "Transitive",
-        Depth: hop.depth,
-        "DAX reference": hop.referenceText,
-        Reports: usage?.reportIds.size ?? 0,
-        Visuals: usage?.visualKeys.size ?? 0,
+        [COLUMN.measureName]: hop.reference.object_name,
+        [COLUMN.semanticTable]: hop.reference.table_name || VALUE.notAvailable,
+        [COLUMN.dependency]: dependencyLabel(hop.depth),
+        [COLUMN.stepsAway]: hop.depth,
+        [COLUMN.referencedAs]: hop.referenceText,
+        [COLUMN.reportCount]: usage?.reportIds.size ?? 0,
+        [COLUMN.visualCount]: usage?.visualKeys.size ?? 0,
       };
-    })
-    .sort((a, b) => Number(a.Depth) - Number(b.Depth) || String(a.Measure).localeCompare(String(b.Measure)));
+    });
 
-  const inputRows: GridRow[] = upstream
+  const inputRows: GridRow[] = [...upstream]
+    .sort(byStepsThenName)
     .map((hop) => ({
       id: `input-${referenceKey(hop.reference)}`,
-      Object: referenceLabel(hop.reference),
-      Type: displayType(hop.reference.object_type),
-      Relationship: hop.depth === 1 ? "Direct" : "Transitive",
-      Depth: hop.depth,
-      "DAX reference": hop.referenceText,
-      "Database table": canonicalType(hop.reference.object_type) === "column" ? (sourcesByTable.get(hop.reference.table_name ?? "") ?? []).join(", ") || "Not reported" : "--",
-    }))
-    .sort((a, b) => Number(a.Depth) - Number(b.Depth) || String(a.Object).localeCompare(String(b.Object)));
+      [COLUMN.objectName]: hop.reference.object_name,
+      [COLUMN.semanticTable]: hop.reference.table_name || VALUE.notAvailable,
+      [COLUMN.objectType]: displayType(hop.reference.object_type),
+      [COLUMN.dependency]: dependencyLabel(hop.depth),
+      [COLUMN.stepsAway]: hop.depth,
+      [COLUMN.referencedAs]: hop.referenceText,
+      // Only a plain column has a database table behind it; measures and calculations do not.
+      [COLUMN.databaseTable]: canonicalType(hop.reference.object_type) === "column" ? (sourcesByTable.get(hop.reference.table_name ?? "") ?? []).join(", ") || VALUE.notAvailable : VALUE.notApplicable,
+    }));
 
   type Usage = { direct: boolean; objects: Set<string>; visuals: Set<string>; pages: Set<string> };
   const reports = new Map<string, Usage>();
@@ -394,19 +440,18 @@ function analyzeMeasure(
   collect(seed, true);
   downstream.forEach((hop) => collect(hop.reference, false));
 
-  const usageLabel = (direct: boolean) => (direct ? "Shows the measure" : "Through impacted measures");
   const reportRows: GridRow[] = [...reports.entries()]
     .map(([reportId, report]) => ({
       id: reportId,
-      Report: reportNames.get(reportId)?.name ?? reportId,
-      Workspace: reportNames.get(reportId)?.workspaceName ?? "--",
-      Usage: usageLabel(report.direct),
-      Pages: report.pages.size,
-      Visuals: report.visuals.size,
-      "Measures shown": [...report.objects].join(", "),
-      "Report ID": reportId,
+      [COLUMN.reportName]: reportNames.get(reportId)?.name ?? reportId,
+      [COLUMN.workspaceName]: reportNames.get(reportId)?.workspaceName ?? VALUE.notAvailable,
+      [COLUMN.howItIsUsed]: howItIsUsed(report.direct),
+      [COLUMN.pageCount]: report.pages.size,
+      [COLUMN.visualCount]: report.visuals.size,
+      [COLUMN.objectsUsed]: [...report.objects].join(", "),
+      [COLUMN.reportId]: reportId,
     }))
-    .sort((a, b) => String(a.Report).localeCompare(String(b.Report)));
+    .sort((a, b) => String(a[COLUMN.reportName]).localeCompare(String(b[COLUMN.reportName])));
 
   const visualRows: GridRow[] = [...visuals.entries()]
     .map(([key, use]) => {
@@ -414,31 +459,31 @@ function analyzeMeasure(
       const reportId = info?.reportId ?? key.split(":")[0];
       return {
         id: key,
-        Visual: info?.visualName ?? key,
-        "Visual type": info?.visualType ?? "--",
-        Page: info?.pageName ?? "--",
-        Report: reportNames.get(reportId)?.name ?? reportId,
-        Workspace: reportNames.get(reportId)?.workspaceName ?? "--",
-        Usage: usageLabel(use.direct),
-        "Fields used": [...use.objects].join(", "),
-        "Report ID": reportId,
-        "Visual key": key,
+        [COLUMN.visualName]: info?.visualName ?? key,
+        [COLUMN.visualType]: info?.visualType ?? VALUE.notAvailable,
+        [COLUMN.pageName]: info?.pageName ?? VALUE.notAvailable,
+        [COLUMN.reportName]: reportNames.get(reportId)?.name ?? reportId,
+        [COLUMN.workspaceName]: reportNames.get(reportId)?.workspaceName ?? VALUE.notAvailable,
+        [COLUMN.howItIsUsed]: howItIsUsed(use.direct),
+        [COLUMN.objectsUsed]: [...use.objects].join(", "),
+        [COLUMN.reportId]: reportId,
+        [COLUMN.visualId]: key,
       };
     })
-    .sort((a, b) => String(a.Report).localeCompare(String(b.Report)) || String(a.Page).localeCompare(String(b.Page)) || String(a.Visual).localeCompare(String(b.Visual)));
+    .sort((a, b) => String(a[COLUMN.reportName]).localeCompare(String(b[COLUMN.reportName])) || String(a[COLUMN.pageName]).localeCompare(String(b[COLUMN.pageName])) || String(a[COLUMN.visualName]).localeCompare(String(b[COLUMN.visualName])));
 
   const modelRows: GridRow[] = [{
     id: modelKey(entry.workspaceId, entry.semanticModelId),
-    "Semantic model": entry.semanticModelName,
-    Workspace: entry.workspaceName,
-    "Home table": entry.tableName,
-    "Measures impacted": impactedMeasureRows.length,
-    "Calculated columns impacted": downstream.filter((hop) => canonicalType(hop.reference.object_type) === "calculated_column").length,
-    "Reports using": reportRows.length,
-    "Visuals using": visualRows.length,
-    "Reports bound": boundCount,
-    "Semantic model ID": entry.semanticModelId,
-    "Workspace ID": entry.workspaceId,
+    [COLUMN.semanticModel]: entry.semanticModelName,
+    [COLUMN.workspaceName]: entry.workspaceName,
+    [COLUMN.measuresSemanticTable]: entry.tableName,
+    [COLUMN.impactedMeasureCount]: impactedMeasureRows.length,
+    [COLUMN.impactedCalculatedColumnCount]: downstream.filter((hop) => canonicalType(hop.reference.object_type) === "calculated_column").length,
+    [COLUMN.reportsUsingCount]: reportRows.length,
+    [COLUMN.visualsUsingCount]: visualRows.length,
+    [COLUMN.connectedReportCount]: boundCount,
+    [COLUMN.semanticModelId]: entry.semanticModelId,
+    [COLUMN.workspaceId]: entry.workspaceId,
   }];
 
   return { tableRows, impactedMeasureRows, inputRows, modelRows, reportRows, visualRows };
@@ -452,20 +497,16 @@ function InventoryStatus({ selectedWorkspaceCount, isLoading, isError, entryCoun
         : isLoading
           ? "Building measure inventory across the selected workspaces..."
           : isError
-            ? "Measure inventory is unavailable for this identity."
-            : `${entryCount} ${entryCount === 1 ? "measure" : "measures"} indexed across ${selectedWorkspaceCount} ${selectedWorkspaceCount === 1 ? "workspace" : "workspaces"}.${skippedCount ? ` ${skippedCount} model(s) skipped (no access).` : ""}`}
+            ? "The measure inventory could not be loaded for your account."
+            : `${entryCount} ${plural(entryCount, "measure", "measures")} indexed across ${selectedWorkspaceCount} ${plural(selectedWorkspaceCount, "workspace", "workspaces")}.${skippedCount ? ` ${skippedCount} semantic ${plural(skippedCount, "model", "models")} skipped (no access).` : ""}`}
     </span>
     <Button type="button" variant="outline" size="sm" disabled={!selectedWorkspaceCount || isLoading} onClick={onRefresh}>{isLoading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />} Refresh inventory</Button>
   </div>;
 }
 
 function ExactLineageStatus({ loading, error, dax }: { loading: boolean; error: boolean; dax: DaxAnalysis | undefined }) {
-  if (loading) return <StatusBand tone="info" loading text="Preparing exact DAX dependencies in the background" />;
-  if (error) return <StatusBand tone="warning" text="Exact DAX analysis is unavailable for this identity. Measure impact requires elevated backend access to compute dependencies." />;
-  if (dax) return <StatusBand tone="success" text={`${dax.dependency_count} exact DAX ${dax.dependency_count === 1 ? "relationship" : "relationships"} ready`} />;
+  if (loading) return <StatusBand tone="info" loading text="Finding calculation links in the background" />;
+  if (error) return <StatusBand tone="warning" text="Calculation links could not be loaded for your account. Measure impact needs elevated backend access to find them." />;
+  if (dax) return <StatusBand tone="success" text={`${dax.dependency_count} calculation ${plural(dax.dependency_count, "link", "links")} found`} />;
   return null;
-}
-
-function filePart(value: string | undefined) {
-  return (value ?? "measure-impact").trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "measure-impact";
 }

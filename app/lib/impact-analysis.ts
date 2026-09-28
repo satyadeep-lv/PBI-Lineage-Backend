@@ -1,5 +1,6 @@
 import { canonicalType, type DaxReference } from "~/lib/dependency-graph";
 import { fetchBatchedExplorer, type EstateDiscoveryResponse, type ExplorerReportSelection, type ParsedTable } from "~/lib/lineage-api";
+import { objectTypeLabel, VALUE } from "~/lib/naming";
 
 /**
  * Shared by Table impact and Measure impact: the bound-report evidence both
@@ -88,7 +89,7 @@ export function buildEvidenceIndex(data: EvidenceData | undefined): EvidenceInde
         reportId: row.report_id,
         pageName: row.page_name ?? row.page_id,
         visualName: row.visual_name ?? row.visual_id,
-        visualType: row.visual_type ?? "Visual",
+        visualType: row.visual_type ?? VALUE.notAvailable,
       });
     }
   });
@@ -113,8 +114,9 @@ export function tableSeeds(table: SourcedTable): DaxReference[] {
   return seeds;
 }
 
+/** A semantic object type in sentence case ("Calculated column"), the same wording as every grid. */
 export function displayType(value: string) {
-  return canonicalType(value).split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+  return objectTypeLabel(canonicalType(value));
 }
 
 /** The estate body also lists every workspace's reports, which the shared type leaves out. */
@@ -139,7 +141,7 @@ export function buildReportNames(estate: EstateWithReports | undefined, evidence
   });
   evidence.forEach((index) => index.reports.forEach((report, id) => {
     const known = names.get(id);
-    if (!known || known.name === id) names.set(id, { name: report.name ?? known?.name ?? id, workspaceName: known?.workspaceName ?? report.workspaceName ?? "--" });
+    if (!known || known.name === id) names.set(id, { name: report.name ?? known?.name ?? id, workspaceName: known?.workspaceName ?? report.workspaceName ?? VALUE.notAvailable });
   }));
   return names;
 }

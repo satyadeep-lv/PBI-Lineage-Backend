@@ -10,9 +10,9 @@ import { PowerBiAuthRequired } from "~/components/workspace/auth-required";
 import { ImpactGrid } from "~/components/workspace/impact-grid";
 import { buildImpactGraph, ImpactLineageDiagram, type ImpactGraphScope, type ReportName } from "~/components/workspace/impact-lineage";
 import { MultiObjectSearch, type SearchGroup } from "~/components/workspace/impact-picker";
-import { EmptyState, EvidenceStatus, ImpactSection, LoadingState, StatusBand, SummaryTile } from "~/components/workspace/impact-ui";
+import { EmptyState, EvidenceStatus, ImpactSection, LoadingState, REPORT_LIST_FAILED_TEXT, StatusBand, SummaryTile } from "~/components/workspace/impact-ui";
 import { canonicalType, computeDependencyClosure, referenceKey, referenceLabel, type DaxDependency, type DaxReference } from "~/lib/dependency-graph";
-import type { GridRow } from "~/lib/grid-export";
+import { filePart, type GridRow } from "~/lib/grid-export";
 import {
   buildEvidenceIndex,
   buildReportNames,
@@ -40,6 +40,7 @@ import {
   type InventoryEntry,
   type ParsedSemanticModel,
 } from "~/lib/lineage-api";
+import { COLUMN, dependencyLabel, gridColumn, nameWithParent, VALUE } from "~/lib/naming";
 import { useAppStore } from "~/stores/app-store";
 import { usePowerAiStore } from "~/stores/power-ai-store";
 
@@ -53,6 +54,10 @@ type ModelRef = { key: string; workspaceId: string; workspaceName: string; seman
 type ImpactTarget = { entry: InventoryEntry; table: SourcedTable; model: ModelRef; selectedAs: string[]; sources: string[] };
 
 const DATABASE_KEY_PREFIX = "db:";
+/** Export file subject when more than one table is selected (Docs/07-column-naming-standard.md, "Export file names"). */
+const MULTIPLE_TABLES_FILE_SUBJECT = "multiple-tables";
+
+const plural = (count: number, one: string, many: string) => (count === 1 ? one : many);
 
 /**
  * Pick semantic tables, or the database tables behind them, and see every
@@ -144,7 +149,13 @@ export function TableImpact() {
 
   const singleTarget = targets.length === 1 ? targets[0] : null;
   const selectedLabels = [...new Set(targets.flatMap((target) => target.selectedAs))];
-  const exportContext = { selected_tables: selectedLabels.join("; ") };
+  const exportContext = { [COLUMN.selectedTables]: selectedLabels.join("; ") };
+  // Files are named after the one table picked in the search (semantic or database), or "multiple-tables".
+  const pickedNames = selectedKeys.flatMap((key) => {
+    const name = tablesByKey.get(key)?.tableName ?? databaseByKey.get(key)?.name;
+    return name ? [name] : [];
+  });
+  const filePrefix = `table-impact-${pickedNames.length === 1 ? filePart(pickedNames[0]) : MULTIPLE_TABLES_FILE_SUBJECT}`;
 
   useEffect(() => {
     const entry = singleTarget?.entry;
@@ -174,7 +185,7 @@ export function TableImpact() {
   const evidenceLoading = evidenceQueries.some((query) => query.isLoading);
   const evidenceTruncated = evidenceQueries.some((query) => query.data?.truncated);
   const usagePending = evidenceLoading || estateQuery.isLoading;
-  const usageEmpty = estateQuery.isError ? "Usage is unavailable because estate discovery failed." : usagePending || daxLoading ? "Checking reports..." : undefined;
+  const usageEmpty = estateQuery.isError ? REPORT_LIST_FAILED_TEXT : usagePending || daxLoading ? "Checking reports..." : undefined;
 
   return <section className="overflow-hidden rounded-lg border border-border bg-surface">
     <div className="border-b border-border px-5 py-5 sm:px-6">
@@ -183,7 +194,7 @@ export function TableImpact() {
         <div>
           <div className="mb-1 flex flex-wrap items-center gap-2"><span className="text-xs font-semibold uppercase text-fabric">Power BI</span><Badge className="rounded-md border border-fabric/25 bg-accent text-accent-foreground">Table impact</Badge></div>
           <h1 className="text-lg font-semibold">Table impact</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Search semantic model tables or the database tables behind them, pick one or several, and see every report, visual, semantic model, and measure that uses them.</p>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Search semantic tables or the database tables behind them, pick one or several, and see every report, visual, semantic model, and measure that uses them.</p>
         </div>
       </div>
     </div>
@@ -195,7 +206,7 @@ export function TableImpact() {
         <MultiObjectSearch
           id="table-impact-tables"
           label="Tables"
-          placeholder="Search semantic model or database tables..."
+          placeholder="Search semantic tables or database tables..."
           groups={searchGroups}
           selectedKeys={selectedKeys}
           onChange={setSelectedKeys}
@@ -205,18 +216,18 @@ export function TableImpact() {
     </div>
 
     <div className="space-y-6 p-5 sm:p-6">
-      {!targets.length && <EmptyState title="No tables selected" text="Search above and pick one or more semantic model tables or database tables to see the reports, visuals, semantic models, and measures that use them." />}
+      {!targets.length && <EmptyState title="No tables selected" text="Search above and pick one or more semantic tables or database tables to see the reports, visuals, semantic models, and measures that use them." />}
       {targets.length > 0 && <>
         <div className="space-y-2">
           <ExactLineageStatus loading={daxLoading} failedModels={daxFailedModels} dependencyCount={dependencyCount} modelCount={models.length} />
-          <EvidenceStatus estateLoading={estateQuery.isLoading} estateError={estateQuery.isError} boundCount={boundTotal} loading={evidenceLoading} truncated={evidenceTruncated} noBoundText="No reports in the accessible estate are bound to the semantic models holding these tables." />
+          <EvidenceStatus estateLoading={estateQuery.isLoading} estateError={estateQuery.isError} boundCount={boundTotal} loading={evidenceLoading} truncated={evidenceTruncated} noBoundText="No report you can open is connected to the semantic models holding these tables." />
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <SummaryTile icon={FileBarChart2} label="Reports" value={analysis.reportRows.length} caption="With a visual that uses the tables" pending={usagePending} />
           <SummaryTile icon={MonitorPlay} label="Visuals" value={analysis.visualRows.length} caption="Reading the tables or their measures" pending={usagePending} />
-          <SummaryTile icon={Layers3} label="Semantic models" value={analysis.modelRows.length} caption={`${targets.length} semantic ${targets.length === 1 ? "table" : "tables"} selected`} pending={false} />
-          <SummaryTile icon={Sigma} label="Measures" value={analysis.measureRows.length} caption="Depending on them, directly or transitively" pending={daxLoading} />
+          <SummaryTile icon={Layers3} label="Semantic models" value={analysis.modelRows.length} caption={`${targets.length} semantic ${plural(targets.length, "table", "tables")} selected`} pending={false} />
+          <SummaryTile icon={Sigma} label="Impacted measures" value={analysis.measureRows.length} caption="Depending on them, directly or indirectly" pending={daxLoading} />
         </div>
 
         {singleTarget && <div className="flex justify-end">
@@ -238,82 +249,94 @@ export function TableImpact() {
         <ImpactLineageDiagram
           graph={impactGraph.graph}
           focusNodeId={singleTarget ? `${singleTarget.model.key}|table|${singleTarget.entry.tableName.toLocaleLowerCase()}` : undefined}
-          title={singleTarget ? `${singleTarget.entry.tableName} impact` : `Impact of ${targets.length} tables`}
+          title={singleTarget ? `${singleTarget.entry.tableName} impact` : `Impact of ${targets.length} semantic tables`}
           description="Database tables and semantic models feed the selected tables; their columns and measures flow down through dependent measures to the reports and visuals that use them."
           emptyText="Nothing depends on the selected tables."
           hiddenReports={impactGraph.hiddenReports}
           hiddenVisuals={impactGraph.hiddenVisuals}
         />
 
-        <ImpactSection icon={FileBarChart2} title="Reports using the selected tables" text="Reports with at least one visual that reads a selected table's fields directly, or reads a measure built on them.">
-          <ImpactGrid rowData={analysis.reportRows} columnDefs={reportColumnDefs} emptyMessage={usageEmpty ?? "No report visual uses the selected tables."} exportFileName="table-impact-reports" exportContext={exportContext} fitRows />
+        <ImpactSection icon={FileBarChart2} title="Reports using the selected tables" text="Reports with at least one visual that uses a selected table directly, or uses a measure built on it.">
+          <ImpactGrid rowData={analysis.reportRows} columnDefs={reportColumnDefs} emptyMessage={usageEmpty ?? "No report visual uses the selected tables."} exportFileName={`${filePrefix}-reports`} exportContext={exportContext} fitRows />
         </ImpactSection>
 
-        <ImpactSection icon={MonitorPlay} title="Visuals using the selected tables" text="Every visual that reads a selected table's fields or a measure depending on them, with the page it sits on.">
-          <ImpactGrid rowData={analysis.visualRows} columnDefs={visualColumnDefs} emptyMessage={usageEmpty ?? "No visual uses the selected tables."} exportFileName="table-impact-visuals" exportContext={exportContext} fitRows />
+        <ImpactSection icon={MonitorPlay} title="Visuals using the selected tables" text="Every visual that uses a selected table's columns or measures, or a measure depending on them, with the page it sits on.">
+          <ImpactGrid rowData={analysis.visualRows} columnDefs={visualColumnDefs} emptyMessage={usageEmpty ?? "No visual uses the selected tables."} exportFileName={`${filePrefix}-visuals`} exportContext={exportContext} fitRows />
         </ImpactSection>
 
         <ImpactSection icon={Layers3} title="Semantic models" text="Every semantic model holding a selected table, with the database tables behind it and how much depends on it.">
-          <ImpactGrid rowData={analysis.modelRows} columnDefs={modelColumnDefs} emptyMessage="No semantic models hold the selected tables." exportFileName="table-impact-semantic-models" exportContext={exportContext} fitRows />
+          <ImpactGrid rowData={analysis.modelRows} columnDefs={modelColumnDefs} emptyMessage="No semantic models hold the selected tables." exportFileName={`${filePrefix}-semantic-models`} exportContext={exportContext} fitRows />
         </ImpactSection>
 
         <ImpactSection icon={Sigma} title="Measures using the selected tables" text="Measures that read a selected table, directly or through another calculation, with the reports and visuals that show them.">
-          <ImpactGrid rowData={analysis.measureRows} columnDefs={measureColumnDefs} emptyMessage={daxLoading ? "Preparing exact DAX dependencies..." : "No measure depends on the selected tables."} exportFileName="table-impact-measures" exportContext={exportContext} fitRows />
+          <ImpactGrid rowData={analysis.measureRows} columnDefs={measureColumnDefs} emptyMessage={daxLoading ? "Finding calculation links..." : "No measure depends on the selected tables."} exportFileName={`${filePrefix}-measures`} exportContext={exportContext} fitRows />
         </ImpactSection>
       </>}
     </div>
   </section>;
 }
 
+// Row keys are the standard headers (Docs/07-column-naming-standard.md), so screen and export always agree;
+// hidden columns are export-only IDs, written last.
 const reportColumnDefs: ColDef<GridRow>[] = [
-  { field: "Report", minWidth: 200, flex: 1.2 },
-  { field: "Workspace", minWidth: 150 },
-  { field: "Semantic model", minWidth: 170 },
-  { field: "Selected tables", minWidth: 190 },
-  { field: "Usage", minWidth: 170 },
-  { field: "Pages", minWidth: 90 },
-  { field: "Visuals", minWidth: 100 },
-  { field: "Objects used", minWidth: 240, flex: 1 },
+  gridColumn(COLUMN.reportName, { minWidth: 200, flex: 1.2 }),
+  gridColumn(COLUMN.workspaceName, { minWidth: 160 }),
+  gridColumn(COLUMN.semanticModel, { minWidth: 170 }),
+  gridColumn(COLUMN.selectedTables, { minWidth: 190 }),
+  gridColumn(COLUMN.howItIsUsed, { minWidth: 170 }),
+  gridColumn(COLUMN.pageCount, { minWidth: 160 }),
+  gridColumn(COLUMN.visualCount, { minWidth: 170 }),
+  gridColumn(COLUMN.objectsUsed, { minWidth: 240, flex: 1 }),
+  gridColumn(COLUMN.reportId, { hide: true }),
+  gridColumn(COLUMN.semanticModelId, { hide: true }),
 ];
 
 const visualColumnDefs: ColDef<GridRow>[] = [
-  { field: "Visual", minWidth: 190, flex: 1 },
-  { field: "Visual type", minWidth: 140 },
-  { field: "Page", minWidth: 150 },
-  { field: "Report", minWidth: 180 },
-  { field: "Workspace", minWidth: 150 },
-  { field: "Usage", minWidth: 170 },
-  { field: "Fields used", minWidth: 220, flex: 1 },
+  gridColumn(COLUMN.visualName, { minWidth: 190, flex: 1 }),
+  gridColumn(COLUMN.visualType, { minWidth: 140 }),
+  gridColumn(COLUMN.pageName, { minWidth: 150 }),
+  gridColumn(COLUMN.reportName, { minWidth: 180 }),
+  gridColumn(COLUMN.workspaceName, { minWidth: 160 }),
+  gridColumn(COLUMN.howItIsUsed, { minWidth: 170 }),
+  gridColumn(COLUMN.objectsUsed, { minWidth: 220, flex: 1 }),
+  gridColumn(COLUMN.selectedTables, { minWidth: 190 }),
+  gridColumn(COLUMN.reportId, { hide: true }),
+  gridColumn(COLUMN.visualId, { hide: true }),
 ];
 
 const modelColumnDefs: ColDef<GridRow>[] = [
-  { field: "Semantic model", minWidth: 190, flex: 1 },
-  { field: "Workspace", minWidth: 150 },
-  { field: "Selected tables", minWidth: 180 },
-  { field: "Database tables", minWidth: 220, flex: 1 },
-  { field: "Measures", minWidth: 110 },
-  { field: "Reports using", minWidth: 130 },
-  { field: "Reports bound", minWidth: 130 },
+  gridColumn(COLUMN.semanticModel, { minWidth: 190, flex: 1 }),
+  gridColumn(COLUMN.workspaceName, { minWidth: 160 }),
+  gridColumn(COLUMN.selectedTables, { minWidth: 180 }),
+  gridColumn(COLUMN.databaseTables, { minWidth: 220, flex: 1 }),
+  gridColumn(COLUMN.impactedMeasureCount, { minWidth: 250 }),
+  gridColumn(COLUMN.reportsUsingCount, { minWidth: 240 }),
+  gridColumn(COLUMN.connectedReportCount, { minWidth: 250 }),
+  gridColumn(COLUMN.semanticModelId, { hide: true }),
+  gridColumn(COLUMN.workspaceId, { hide: true }),
 ];
 
 const measureColumnDefs: ColDef<GridRow>[] = [
-  { field: "Measure", minWidth: 200, flex: 1 },
-  { field: "Semantic model", minWidth: 170 },
-  { field: "Workspace", minWidth: 150 },
-  { field: "Selected tables", minWidth: 190 },
-  { field: "Relationship", minWidth: 130 },
-  { field: "Depth", minWidth: 90 },
-  { field: "DAX reference", minWidth: 220, flex: 1 },
-  { field: "Reports", minWidth: 100 },
-  { field: "Visuals", minWidth: 100 },
+  gridColumn(COLUMN.measureName, { minWidth: 200, flex: 1 }),
+  gridColumn(COLUMN.semanticTable, { minWidth: 160 }),
+  gridColumn(COLUMN.semanticModel, { minWidth: 170 }),
+  gridColumn(COLUMN.workspaceName, { minWidth: 160 }),
+  gridColumn(COLUMN.selectedTables, { minWidth: 190 }),
+  gridColumn(COLUMN.dependency, { minWidth: 130 }),
+  gridColumn(COLUMN.stepsAway, { minWidth: 120 }),
+  gridColumn(COLUMN.referencedAs, { minWidth: 220, flex: 1 }),
+  gridColumn(COLUMN.reportCount, { minWidth: 170 }),
+  gridColumn(COLUMN.visualCount, { minWidth: 170 }),
+  gridColumn(COLUMN.semanticModelId, { hide: true }),
 ];
 
 function findParsedTable(parsedByModel: Map<string, ParsedSemanticModel>, entry: InventoryEntry) {
   return (parsedByModel.get(modelKey(entry.workspaceId, entry.semanticModelId))?.tables.find((table) => table.name === entry.tableName) ?? null) as SourcedTable | null;
 }
 
+/** "Sales (Finance Model)": the chip and "Selected tables" text for a semantic table. */
 function semanticLabel(entry: InventoryEntry) {
-  return `${entry.tableName} (${entry.semanticModelName})`;
+  return nameWithParent(entry.tableName, entry.semanticModelName);
 }
 
 function buildDatabaseTables(tables: InventoryEntry[], parsedByModel: Map<string, ParsedSemanticModel>): DatabaseTable[] {
@@ -333,8 +356,8 @@ function buildSearchGroups(tables: InventoryEntry[], databaseTables: DatabaseTab
   return [
     {
       id: "semantic",
-      heading: "Semantic model tables",
-      chipLabel: "Model",
+      heading: "Semantic tables",
+      chipLabel: "Semantic",
       entries: [...tables].sort((a, b) => a.tableName.localeCompare(b.tableName)).map((entry) => {
         const sources = parsedByModel ? tableSources(findParsedTable(parsedByModel, entry)) : [];
         return {
@@ -359,7 +382,7 @@ function buildSearchGroups(tables: InventoryEntry[], databaseTables: DatabaseTab
           key: table.key,
           searchValue: `${table.name} ${users.join(" ")}`,
           primary: table.name,
-          secondary: `Behind ${users.length} semantic ${users.length === 1 ? "table" : "tables"}: ${users.join(", ")}`,
+          secondary: `Behind ${users.length} semantic ${plural(users.length, "table", "tables")}: ${users.join(", ")}`,
         };
       }),
     },
@@ -426,6 +449,8 @@ type MeasureAccumulator = { model: ModelRef; reference: DaxReference; depth: num
 type ReportAccumulator = { reportId: string; model: ModelRef; direct: boolean; objects: Set<string>; visuals: Set<string>; pages: Set<string>; selectedAs: Set<string> };
 type VisualAccumulator = { key: string; reportId: string; model: ModelRef; direct: boolean; objects: Set<string>; selectedAs: Set<string> };
 
+const howItIsUsed = (direct: boolean) => (direct ? VALUE.usesDirectly : VALUE.throughMeasure);
+
 /**
  * Walks each target's downstream DAX closure inside its own model (reference
  * keys are only unique within one model), then joins the closure to that
@@ -489,67 +514,69 @@ function analyzeImpact(
   const reportRows: GridRow[] = [...reports.values()]
     .map((report) => ({
       id: report.reportId,
-      Report: reportNames.get(report.reportId)?.name ?? report.reportId,
-      Workspace: reportNames.get(report.reportId)?.workspaceName ?? "--",
-      "Semantic model": report.model.semanticModelName,
-      "Selected tables": [...report.selectedAs].join(", "),
-      Usage: report.direct ? "Reads table fields" : "Through measures",
-      Pages: report.pages.size,
-      Visuals: report.visuals.size,
-      "Objects used": [...report.objects].join(", "),
-      "Report ID": report.reportId,
-      "Semantic model ID": report.model.semanticModelId,
+      [COLUMN.reportName]: reportNames.get(report.reportId)?.name ?? report.reportId,
+      [COLUMN.workspaceName]: reportNames.get(report.reportId)?.workspaceName ?? VALUE.notAvailable,
+      [COLUMN.semanticModel]: report.model.semanticModelName,
+      [COLUMN.selectedTables]: [...report.selectedAs].join(", "),
+      [COLUMN.howItIsUsed]: howItIsUsed(report.direct),
+      [COLUMN.pageCount]: report.pages.size,
+      [COLUMN.visualCount]: report.visuals.size,
+      [COLUMN.objectsUsed]: [...report.objects].join(", "),
+      [COLUMN.reportId]: report.reportId,
+      [COLUMN.semanticModelId]: report.model.semanticModelId,
     }))
-    .sort((a, b) => String(a.Report).localeCompare(String(b.Report)));
+    .sort((a, b) => String(a[COLUMN.reportName]).localeCompare(String(b[COLUMN.reportName])));
 
   const visualRows: GridRow[] = [...visuals.values()]
     .map((visual) => {
       const info = evidenceByModel.get(visual.model.key)?.visuals.get(visual.key);
       return {
         id: visual.key,
-        Visual: info?.visualName ?? visual.key,
-        "Visual type": info?.visualType ?? "--",
-        Page: info?.pageName ?? "--",
-        Report: reportNames.get(visual.reportId)?.name ?? visual.reportId,
-        Workspace: reportNames.get(visual.reportId)?.workspaceName ?? "--",
-        Usage: visual.direct ? "Reads table fields" : "Through measures",
-        "Fields used": [...visual.objects].join(", "),
-        "Selected tables": [...visual.selectedAs].join(", "),
-        "Report ID": visual.reportId,
-        "Visual key": visual.key,
+        [COLUMN.visualName]: info?.visualName ?? visual.key,
+        [COLUMN.visualType]: info?.visualType ?? VALUE.notAvailable,
+        [COLUMN.pageName]: info?.pageName ?? VALUE.notAvailable,
+        [COLUMN.reportName]: reportNames.get(visual.reportId)?.name ?? visual.reportId,
+        [COLUMN.workspaceName]: reportNames.get(visual.reportId)?.workspaceName ?? VALUE.notAvailable,
+        [COLUMN.howItIsUsed]: howItIsUsed(visual.direct),
+        [COLUMN.objectsUsed]: [...visual.objects].join(", "),
+        [COLUMN.selectedTables]: [...visual.selectedAs].join(", "),
+        [COLUMN.reportId]: visual.reportId,
+        [COLUMN.visualId]: visual.key,
       };
     })
-    .sort((a, b) => String(a.Report).localeCompare(String(b.Report)) || String(a.Page).localeCompare(String(b.Page)) || String(a.Visual).localeCompare(String(b.Visual)));
+    .sort((a, b) => String(a[COLUMN.reportName]).localeCompare(String(b[COLUMN.reportName])) || String(a[COLUMN.pageName]).localeCompare(String(b[COLUMN.pageName])) || String(a[COLUMN.visualName]).localeCompare(String(b[COLUMN.visualName])));
 
+  // Same order as before the split into Measure name + Semantic table: steps away, then Table[Measure].
   const measureRows: GridRow[] = [...measures.entries()]
+    .sort(([, a], [, b]) => a.depth - b.depth || referenceLabel(a.reference).localeCompare(referenceLabel(b.reference)))
     .map(([key, measure]) => ({
       id: key,
-      Measure: referenceLabel(measure.reference),
-      "Semantic model": measure.model.semanticModelName,
-      Workspace: measure.model.workspaceName,
-      "Selected tables": [...measure.selectedAs].join(", "),
-      Relationship: measure.depth === 1 ? "Direct" : "Transitive",
-      Depth: measure.depth,
-      "DAX reference": measure.referenceText,
-      Reports: measure.reportIds.size,
-      Visuals: measure.visualKeys.size,
-      "Semantic model ID": measure.model.semanticModelId,
-    }))
-    .sort((a, b) => Number(a.Depth) - Number(b.Depth) || String(a.Measure).localeCompare(String(b.Measure)));
+      [COLUMN.measureName]: measure.reference.object_name,
+      [COLUMN.semanticTable]: measure.reference.table_name || VALUE.notAvailable,
+      [COLUMN.semanticModel]: measure.model.semanticModelName,
+      [COLUMN.workspaceName]: measure.model.workspaceName,
+      [COLUMN.selectedTables]: [...measure.selectedAs].join(", "),
+      [COLUMN.dependency]: dependencyLabel(measure.depth),
+      [COLUMN.stepsAway]: measure.depth,
+      [COLUMN.referencedAs]: measure.referenceText,
+      [COLUMN.reportCount]: measure.reportIds.size,
+      [COLUMN.visualCount]: measure.visualKeys.size,
+      [COLUMN.semanticModelId]: measure.model.semanticModelId,
+    }));
 
   const modelRows: GridRow[] = models.map((model) => {
     const modelTargets = targets.filter((target) => target.model.key === model.key);
     return {
       id: model.key,
-      "Semantic model": model.semanticModelName,
-      Workspace: model.workspaceName,
-      "Selected tables": modelTargets.map((target) => target.entry.tableName).join(", "),
-      "Database tables": [...new Set(modelTargets.flatMap((target) => target.sources))].join(", ") || "Not reported",
-      Measures: measureRows.filter((row) => row["Semantic model ID"] === model.semanticModelId).length,
-      "Reports using": reportRows.filter((row) => row["Semantic model ID"] === model.semanticModelId).length,
-      "Reports bound": boundByModel.get(model.key)?.length ?? 0,
-      "Semantic model ID": model.semanticModelId,
-      "Workspace ID": model.workspaceId,
+      [COLUMN.semanticModel]: model.semanticModelName,
+      [COLUMN.workspaceName]: model.workspaceName,
+      [COLUMN.selectedTables]: modelTargets.map((target) => target.entry.tableName).join(", "),
+      [COLUMN.databaseTables]: [...new Set(modelTargets.flatMap((target) => target.sources))].join(", ") || VALUE.notAvailable,
+      [COLUMN.impactedMeasureCount]: measureRows.filter((row) => row[COLUMN.semanticModelId] === model.semanticModelId).length,
+      [COLUMN.reportsUsingCount]: reportRows.filter((row) => row[COLUMN.semanticModelId] === model.semanticModelId).length,
+      [COLUMN.connectedReportCount]: boundByModel.get(model.key)?.length ?? 0,
+      [COLUMN.semanticModelId]: model.semanticModelId,
+      [COLUMN.workspaceId]: model.workspaceId,
     };
   });
 
@@ -557,20 +584,21 @@ function analyzeImpact(
 }
 
 function InventoryStatus({ workspaceCount, isLoading, isError, tableCount, databaseCount, skippedCount, onRefresh }: { workspaceCount: number; isLoading: boolean; isError: boolean; tableCount: number; databaseCount: number; skippedCount: number; onRefresh: () => void }) {
+  const workspacesText = `${workspaceCount} ${plural(workspaceCount, "workspace", "workspaces")}`;
   return <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-subtle px-5 py-2.5 text-xs sm:px-6">
     <span className="text-muted-foreground">
       {isLoading
-        ? `Building the table inventory across ${workspaceCount} ${workspaceCount === 1 ? "workspace" : "workspaces"}...`
+        ? `Building the table inventory across ${workspacesText}...`
         : isError
-          ? "Table inventory is unavailable for this identity."
-          : `${tableCount} semantic ${tableCount === 1 ? "table" : "tables"} and ${databaseCount} database ${databaseCount === 1 ? "table" : "tables"} indexed across ${workspaceCount} ${workspaceCount === 1 ? "workspace" : "workspaces"}.${skippedCount ? ` ${skippedCount} model(s) skipped (no access).` : ""}`}
+          ? "The table inventory could not be loaded for your account."
+          : `${tableCount} semantic ${plural(tableCount, "table", "tables")} and ${databaseCount} database ${plural(databaseCount, "table", "tables")} indexed across ${workspacesText}.${skippedCount ? ` ${skippedCount} semantic ${plural(skippedCount, "model", "models")} skipped (no access).` : ""}`}
     </span>
     <Button type="button" variant="outline" size="sm" disabled={!workspaceCount || isLoading} onClick={onRefresh}>{isLoading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />} Refresh inventory</Button>
   </div>;
 }
 
 function ExactLineageStatus({ loading, failedModels, dependencyCount, modelCount }: { loading: boolean; failedModels: ModelRef[]; dependencyCount: number; modelCount: number }) {
-  if (loading) return <StatusBand tone="info" loading text="Preparing exact DAX dependencies in the background" />;
-  if (failedModels.length) return <StatusBand tone="warning" text={`Exact DAX analysis is unavailable for ${failedModels.map((model) => model.semanticModelName).join(", ")}. Table impact requires elevated backend access to compute dependencies.`} />;
-  return <StatusBand tone="success" text={`${dependencyCount} exact DAX ${dependencyCount === 1 ? "relationship" : "relationships"} ready across ${modelCount} semantic ${modelCount === 1 ? "model" : "models"}`} />;
+  if (loading) return <StatusBand tone="info" loading text="Finding calculation links in the background" />;
+  if (failedModels.length) return <StatusBand tone="warning" text={`Calculation links could not be loaded for ${failedModels.map((model) => model.semanticModelName).join(", ")}. Table impact needs elevated backend access to find them.`} />;
+  return <StatusBand tone="success" text={`${dependencyCount} calculation ${plural(dependencyCount, "link", "links")} found in ${modelCount} semantic ${plural(modelCount, "model", "models")}`} />;
 }

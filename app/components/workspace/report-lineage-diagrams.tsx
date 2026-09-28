@@ -5,6 +5,7 @@ import { LineageDiagram } from "~/components/workspace/lineage/lineage-diagram";
 import type { LineageGraph } from "~/components/workspace/lineage/lineage-types";
 import { Button } from "~/components/ui/button";
 import { canonicalType, closureToLineageGraph, computeDependencyClosure, referenceKey, type DaxDependency, type DaxReference } from "~/lib/dependency-graph";
+import { COLUMN, objectTypeLabel, VALUE } from "~/lib/naming";
 import { cn } from "~/lib/utils";
 
 type ReportChoice = {
@@ -37,10 +38,21 @@ type SelectOption = { value: string; label: string };
 
 const SUMMARY_SCOPE = "__report_summary__";
 const modeOptions: Array<{ id: LineageMode; label: string; icon: typeof GitBranch }> = [
-  { id: "report", label: "Report & database", icon: Network },
+  { id: "report", label: "Report and database", icon: Network },
   { id: "column", label: "Column lineage", icon: Columns3 },
-  { id: "calculation", label: "Measure & calculated column", icon: Calculator },
+  { id: "calculation", label: "Measures and calculated columns", icon: Calculator },
 ];
+
+/** Diagram metric and selector labels that are not grid headers (Docs/07-column-naming-standard.md). */
+const LABEL = {
+  dataSources: "Data sources",
+  semanticObjects: "Semantic objects",
+  pages: "Pages",
+  visuals: "Visuals",
+  diagramScope: "Diagram scope",
+  column: "Column",
+  calculation: "Calculation",
+} as const;
 
 export function ReportLineageDiagrams({ report, snapshot, parsed, dax, exactLineageLoading, exactLineageError }: {
   report: ReportChoice;
@@ -55,7 +67,7 @@ export function ReportLineageDiagrams({ report, snapshot, parsed, dax, exactLine
   return <div className="space-y-5">
     <div className="flex items-start gap-3">
       <span className="mt-0.5 text-cyan-800"><GitBranch className="size-5" /></span>
-      <div><h2 className="text-base font-semibold">Lineage diagrams</h2><p className="mt-1 text-sm leading-6 text-zinc-500">Trace the selected report from physical database evidence through its semantic model, calculations, pages, and visuals.</p></div>
+      <div><h2 className="text-base font-semibold">Lineage diagrams</h2><p className="mt-1 text-sm leading-6 text-zinc-500">Trace the selected report from its data sources through its semantic model, calculations, pages, and visuals.</p></div>
     </div>
 
     <div className="overflow-x-auto border-y border-zinc-200 bg-zinc-50 p-1">
@@ -75,10 +87,10 @@ export function ReportLineageDiagrams({ report, snapshot, parsed, dax, exactLine
 }
 
 function ExactLineageStatus({ loading, error, dax, hasModel }: { loading: boolean; error: boolean; dax: DaxAnalysis | undefined; hasModel: boolean }) {
-  if (!hasModel) return <StatusBand tone="warning" text="The report's semantic model binding could not be resolved. Snapshot source mappings remain available." />;
-  if (loading) return <div className="flex items-center gap-2 border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900"><Loader2 className="size-3.5 animate-spin" />Preparing exact DAX dependencies in the background</div>;
-  if (error) return <StatusBand tone="warning" text="Exact DAX analysis is unavailable for this identity. The diagram is using the report snapshot's source evidence." />;
-  if (dax) return <StatusBand tone="success" text={`${dax.dependency_count} exact DAX ${dax.dependency_count === 1 ? "relationship" : "relationships"} ready`} />;
+  if (!hasModel) return <StatusBand tone="warning" text="The report's semantic model was not found. The mapping of semantic objects to data sources is still available." />;
+  if (loading) return <div className="flex items-center gap-2 border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900"><Loader2 className="size-3.5 animate-spin" />Finding calculation links in the background</div>;
+  if (error) return <StatusBand tone="warning" text="DAX analysis is not available for your account. The diagram uses the report's mapping of semantic objects to data sources instead." />;
+  if (dax) return <StatusBand tone="success" text={`${dax.dependency_count} calculation ${dax.dependency_count === 1 ? "link" : "links"} found in this semantic model`} />;
   return null;
 }
 
@@ -93,10 +105,10 @@ function ReportDatabaseLineage({ report, snapshot }: { report: ReportChoice; sna
 
   return <div className="space-y-4">
     <div className="grid gap-4 border-y border-zinc-200 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-      <LineageSelect id="report-lineage-page" label="Diagram scope" value={pageScope} options={[{ value: SUMMARY_SCOPE, label: "Whole report summary" }, ...pages]} onChange={setPageScope} />
-      <div className="grid grid-cols-3 border border-zinc-200 bg-zinc-50"><Metric label="Database objects" value={snapshot.source_database_lineage.count} /><Metric label="Semantic objects" value={snapshot.semantic_model_objects.count} /><Metric label={pageScope === SUMMARY_SCOPE ? "Report pages" : "Page visuals"} value={pageScope === SUMMARY_SCOPE ? pages.length : uniqueVisuals(snapshot.report_layout.rows.filter((row) => row.page_id === pageScope)).length} /></div>
+      <LineageSelect id="report-lineage-page" label={LABEL.diagramScope} value={pageScope} options={[{ value: SUMMARY_SCOPE, label: "Whole report summary" }, ...pages]} onChange={setPageScope} />
+      <div className="grid grid-cols-3 border border-zinc-200 bg-zinc-50"><Metric label={LABEL.dataSources} value={snapshot.source_database_lineage.count} /><Metric label={LABEL.semanticObjects} value={snapshot.semantic_model_objects.count} /><Metric label={pageScope === SUMMARY_SCOPE ? LABEL.pages : LABEL.visuals} value={pageScope === SUMMARY_SCOPE ? pages.length : uniqueVisuals(snapshot.report_layout.rows.filter((row) => row.page_id === pageScope)).length} /></div>
     </div>
-    <LineageDiagram direction="LR" graph={graph} title={selectedPage ? `${selectedPage} lineage` : `${report.report.name} lineage`} description={selectedPage ? "Physical sources and semantic tables used by the selected report page, followed by its visual objects." : "Physical database objects flow into semantic tables, the linked model, the report, and its pages."} emptyText="No verified lineage data available." />
+    <LineageDiagram direction="LR" graph={graph} title={selectedPage ? `${selectedPage} lineage` : `${report.report.name} lineage`} description={selectedPage ? "Data sources and semantic tables used by the selected page, followed by its visuals." : "Data sources flow into semantic tables, the semantic model, the report, and its pages."} emptyText="No verified lineage data available." />
   </div>;
 }
 
@@ -121,11 +133,11 @@ function ColumnLineage({ snapshot, parsed, dax }: { snapshot: ExplorerSnapshot; 
   if (!columns.length) return <EmptyDiagram text="No semantic columns were returned for this report." />;
   return <div className="space-y-4">
     <div className="grid gap-4 border-y border-zinc-200 py-4 md:grid-cols-2">
-      <LineageSelect id="column-lineage-table" label="Semantic table" value={tableName} options={tableNames.map(asOption)} onChange={setTableName} />
-      <LineageSelect id="column-lineage-column" label="Column" value={columnKey} options={tableColumns.map((column) => ({ value: column.key, label: `${column.name}${canonicalType(column.objectType) === "calculated_column" ? " (calculated)" : ""}` }))} onChange={setColumnKey} />
+      <LineageSelect id="column-lineage-table" label={COLUMN.semanticTable} value={tableName} options={tableNames.map(asOption)} onChange={setTableName} />
+      <LineageSelect id="column-lineage-column" label={LABEL.column} value={columnKey} options={tableColumns.map((column) => ({ value: column.key, label: `${column.name}${canonicalType(column.objectType) === "calculated_column" ? " (calculated)" : ""}` }))} onChange={setColumnKey} />
     </div>
     {selected && <ObjectEvidence object={selected} />}
-    <LineageDiagram direction="TB" graph={graph} focusNodeId={focusNodeId} title="Column-level lineage" description={selected ? `${selected.table}[${selected.name}] from database source evidence through calculations that use this column.` : "Column lineage"} emptyText="No verified lineage data available." />
+    <LineageDiagram direction="TB" graph={graph} focusNodeId={focusNodeId} title="Column lineage" description={selected ? `${selected.table}[${selected.name}] from its data source through the calculations that use this column.` : "Column lineage"} emptyText="No verified lineage data available." />
   </div>;
 }
 
@@ -150,8 +162,8 @@ function CalculationLineage({ snapshot, parsed, dax }: { snapshot: ExplorerSnaps
   if (!calculations.length) return <EmptyDiagram text="No measures or calculated columns were returned for this report." />;
   return <div className="space-y-4">
     <div className="grid gap-4 border-y border-zinc-200 py-4 md:grid-cols-2">
-      <LineageSelect id="calculation-lineage-table" label="Semantic table" value={tableName} options={tableNames.map(asOption)} onChange={setTableName} />
-      <LineageSelect id="calculation-lineage-target" label="Target calculation" value={targetKey} options={tableCalculations.map((object) => ({ value: object.key, label: `${object.name} (${displayType(object.objectType)})` }))} onChange={setTargetKey} />
+      <LineageSelect id="calculation-lineage-table" label={COLUMN.semanticTable} value={tableName} options={tableNames.map(asOption)} onChange={setTableName} />
+      <LineageSelect id="calculation-lineage-target" label={LABEL.calculation} value={targetKey} options={tableCalculations.map((object) => ({ value: object.key, label: `${object.name} (${displayType(object.objectType)})` }))} onChange={setTargetKey} />
     </div>
     {selected && <ObjectEvidence object={selected} />}
     <LineageDiagram direction="LR" graph={graph} focusNodeId={focusNodeId} title={`${selected ? displayType(selected.objectType) : "Calculation"} lineage`} description={selected ? `${selected.table}[${selected.name}] is the focal calculation. Inputs flow in from the left; dependent calculations flow out to the right.` : "Calculation lineage"} emptyText="No DAX dependencies were found for the selected calculation." />
@@ -161,14 +173,14 @@ function CalculationLineage({ snapshot, parsed, dax }: { snapshot: ExplorerSnaps
 function ObjectEvidence({ object }: { object: LineageObject }) {
   const [copied, setCopied] = useState(false);
   const hasExpression = Boolean(object.expression?.trim());
-  const evidence = object.expression?.trim() || object.sourcePath || object.sourceColumn || "No source expression is declared for this object.";
+  const evidence = object.expression?.trim() || object.sourcePath || object.sourceColumn || "No DAX expression or data source is declared for this object.";
   async function copyExpression() {
     await copyText(evidence);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1400);
   }
   return <div className="border border-zinc-200 bg-zinc-50">
-    <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm font-semibold" title={`${object.table}[${object.name}]`}>{object.table}[{object.name}]</p><p className="mt-0.5 text-xs text-zinc-500">{displayType(object.objectType)}{object.sourceColumn ? ` · source column ${object.sourceColumn}` : ""}</p></div><Button type="button" variant="outline" size="sm" onClick={() => void copyExpression()}>{copied ? <CheckCircle2 className="size-3.5 text-emerald-700" /> : <Copy className="size-3.5" />}{copied ? "Copied" : hasExpression ? "Copy DAX" : "Copy source"}</Button></div>
+    <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm font-semibold" title={`${object.table}[${object.name}]`}>{object.table}[{object.name}]</p><p className="mt-0.5 text-xs text-zinc-500">{displayType(object.objectType)}{object.sourceColumn ? ` · ${COLUMN.databaseColumn} ${object.sourceColumn}` : ""}</p></div><Button type="button" variant="outline" size="sm" onClick={() => void copyExpression()}>{copied ? <CheckCircle2 className="size-3.5 text-emerald-700" /> : <Copy className="size-3.5" />}{copied ? "Copied" : hasExpression ? "Copy DAX" : "Copy source"}</Button></div>
     <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-zinc-700">{evidence}</pre>
   </div>;
 }
@@ -216,7 +228,7 @@ function buildReportGraph(report: ReportChoice, snapshot: ExplorerSnapshot, page
 
   const modelId = "selected-semantic-model";
   const reportId = "selected-report";
-  nodes.push({ id: modelId, kind: "semantic-model", label: report.semanticModelName ?? "Linked semantic model", detail: report.semanticModelId ?? "Model ID unresolved" });
+  nodes.push({ id: modelId, kind: "semantic-model", label: report.semanticModelName ?? COLUMN.semanticModel, detail: report.semanticModelId ?? `${COLUMN.semanticModelId}: ${VALUE.notFound}` });
   nodes.push({ id: reportId, kind: "report", label: report.report.name, detail: report.workspaceName });
   tableIds.forEach((id, table) => edges.push({ id: `table-model-${lineageId(table)}`, source: id, target: modelId, label: "belongs to" }));
   edges.push({ id: "model-report", source: modelId, target: reportId, label: "powers" });
@@ -248,15 +260,15 @@ function buildColumnGraph(snapshot: ExplorerSnapshot, parsed: ParsedSemanticMode
   const closure = computeDependencyClosure(dependencies, [seed]);
   const graph = closureToLineageGraph({ seeds: [seed], upstream: [], downstream: closure.downstream }, dependencies);
   graph.nodes.forEach((node) => {
-    node.detail = node.id === rootId ? (selected.expression ?? selected.sourcePath ?? "Semantic column") : (expressionIndex.get(node.id) ?? node.detail);
+    node.detail = node.id === rootId ? (selected.expression ?? selected.sourcePath ?? objectTypeLabel(selected.objectType)) : (expressionIndex.get(node.id) ?? node.detail);
   });
 
   const sourceRows = snapshot.source_database_lineage.rows.filter((row) => row.semantic_table === selected.table);
   const sources = uniqueBy(sourceRows, (row) => row.source_id);
-  const sourceItems = sources.length ? sources : [{ source_id: `declared-${selected.key}`, source_provider: "Definition", source_object_type: "column", source_fully_qualified_name: selected.sourcePath ?? "Physical source not declared" }];
+  const sourceItems = sources.length ? sources : [{ source_id: `declared-${selected.key}`, source_provider: "Definition", source_object_type: "column", source_fully_qualified_name: selected.sourcePath ?? `${COLUMN.databaseTable}: ${VALUE.notAvailable}` }];
   sourceItems.forEach((source) => {
     const id = `source-${lineageId(source.source_id)}`;
-    const columnDetail = selected.sourceColumn ? `Column ${selected.sourceColumn}` : "Source column not declared";
+    const columnDetail = `${COLUMN.databaseColumn} ${selected.sourceColumn ?? VALUE.notAvailable.toLocaleLowerCase()}`;
     graph.nodes.push({ id, kind: "database-source", label: source.source_fully_qualified_name, detail: `${source.source_provider} · ${columnDetail}` });
     graph.edges.push({ id: `source-root-${lineageId(source.source_id)}`, source: id, target: rootId, label: "maps to" });
   });
@@ -271,7 +283,7 @@ function buildCalculationGraph(snapshot: ExplorerSnapshot, parsed: ParsedSemanti
   const closure = computeDependencyClosure(dependencies, [seed]);
   const graph = closureToLineageGraph(closure, dependencies);
   graph.nodes.forEach((node) => {
-    node.detail = node.id === rootId ? (selected.expression ?? "Target calculation") : (expressionIndex.get(node.id) ?? node.detail);
+    node.detail = node.id === rootId ? (selected.expression ?? LABEL.calculation) : (expressionIndex.get(node.id) ?? node.detail);
   });
   return graph;
 }
@@ -307,7 +319,7 @@ function collectDependencies(snapshot: ExplorerSnapshot, dax: DaxAnalysis | unde
     return [{
       source: makeReference(sourceType, row.source_semantic_table, sourceName),
       target: makeReference(targetType, row.semantic_table ?? "", row.semantic_object_name),
-      reference_text: row.is_direct_dependency ? "direct dependency" : `source evidence${row.dependency_depth ? ` · depth ${row.dependency_depth}` : ""}`,
+      reference_text: row.is_direct_dependency ? "direct" : `indirect${row.dependency_depth ? ` · ${row.dependency_depth} steps away` : ""}`,
     }];
   });
   return uniqueBy(dependencies, (dependency) => `${referenceKey(dependency.source)}>${referenceKey(dependency.target)}`);
@@ -327,7 +339,7 @@ function makeReference(objectType: string, tableName: string, objectName: string
 function selectionKey(objectType: string, table: string, name: string) { return `${canonicalType(objectType)}${table}${name}`; }
 function isColumnType(value: string) { const type = canonicalType(value); return type === "column" || type === "calculated_column"; }
 function isCalculationType(value: string) { const type = canonicalType(value); return type === "measure" || type === "calculated_column" || type === "calculated_table"; }
-function displayType(value: string) { return canonicalType(value).split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "); }
+function displayType(value: string) { return objectTypeLabel(canonicalType(value)); }
 
 function uniquePages(rows: ReportLayoutRow[]): SelectOption[] { return uniqueBy(rows, (row) => row.page_id).sort((first, second) => (first.page_order ?? Number.MAX_SAFE_INTEGER) - (second.page_order ?? Number.MAX_SAFE_INTEGER) || first.page_name.localeCompare(second.page_name)).map((row) => ({ value: row.page_id, label: row.page_name })); }
 function uniqueVisuals(rows: ReportLayoutRow[]): SelectOption[] { return uniqueBy(rows, (row) => `${row.page_id}:${row.visual_id}`).map((row) => ({ value: `${row.page_id}:${row.visual_id}`, label: row.visual_name })); }

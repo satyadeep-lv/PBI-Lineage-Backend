@@ -50,7 +50,16 @@ export function EmptyState({ title, text }: { title: string; text: string }) {
   return <div className="border border-zinc-200 bg-white p-10 text-center"><p className="text-sm font-semibold">{title}</p><p className="mt-1 text-sm text-zinc-500">{text}</p></div>;
 }
 
-/** Evidence band shared by both pages: estate state first, then bound-report checking. */
+/** Shown on both grids' pages when the list of reports could not be loaded, so no report or visual usage exists. */
+export const REPORT_LIST_FAILED_TEXT = "Report usage is not available because the list of reports could not be loaded.";
+
+const reportsWord = (count: number) => (count === 1 ? "report" : "reports");
+
+/**
+ * Report-usage band shared by both pages: first whether the list of reports
+ * loaded, then the check of the visuals in the reports connected to the
+ * semantic models (wording from Docs/07-column-naming-standard.md).
+ */
 export function EvidenceStatus({ estateLoading, estateError, boundCount, loading, truncated, noBoundText }: {
   estateLoading: boolean;
   estateError: boolean;
@@ -59,10 +68,10 @@ export function EvidenceStatus({ estateLoading, estateError, boundCount, loading
   truncated: boolean;
   noBoundText: string;
 }) {
-  if (estateError) return <StatusBand tone="warning" text="Estate discovery is unavailable for this identity. Report and visual usage cannot be computed; the dependency results remain accurate." />;
-  if (estateLoading) return <StatusBand tone="info" loading text="Finding the reports bound to these semantic models..." />;
+  if (estateError) return <StatusBand tone="warning" text="The list of reports could not be loaded for your account. Report and visual usage cannot be shown; the dependency results remain accurate." />;
+  if (estateLoading) return <StatusBand tone="info" loading text="Finding the reports connected to these semantic models..." />;
   if (!boundCount) return <StatusBand tone="warning" text={noBoundText} />;
-  if (loading) return <StatusBand tone="info" loading text={`Checking ${boundCount} bound ${boundCount === 1 ? "report" : "reports"} for visuals that use these objects`} />;
-  if (truncated) return <StatusBand tone="warning" text="Report usage was computed from the first 300 bound reports of at least one semantic model." />;
-  return <StatusBand tone="success" text={`Visual usage checked across ${boundCount} bound ${boundCount === 1 ? "report" : "reports"}.`} />;
+  if (loading) return <StatusBand tone="info" loading text={`Checking the visuals in ${boundCount} connected ${reportsWord(boundCount)}`} />;
+  if (truncated) return <StatusBand tone="warning" text="Report usage was checked in the first 300 connected reports of at least one semantic model." />;
+  return <StatusBand tone="success" text={`Checked the visuals in ${boundCount} connected ${reportsWord(boundCount)}.`} />;
 }

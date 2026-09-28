@@ -4,7 +4,8 @@ import { CheckCircle2, ClipboardCopy, Copy, Download, FileSpreadsheet } from "lu
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
-import { copyText, downloadCsv, downloadExcel, toTabSeparatedValues, withExportContext, type ExportContext, type GridRow } from "~/lib/grid-export";
+import { copyText, downloadExportCsv, downloadExportExcel, exportTableToTsv, toExportTable, type ExportColumn, type ExportContext, type GridRow } from "~/lib/grid-export";
+import { VALUE } from "~/lib/naming";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -26,7 +27,7 @@ function abbreviate(value: string, length: number) {
 
 function CopyableCell({ value }: ICellRendererParams<GridRow>) {
   const [copied, setCopied] = useState(false);
-  const text = String(value ?? "--");
+  const text = String(value ?? VALUE.notAvailable);
 
   async function copyValue(event: React.MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
@@ -38,6 +39,10 @@ function CopyableCell({ value }: ICellRendererParams<GridRow>) {
   return <span className="group flex h-full min-w-0 items-center gap-1"><span className="min-w-0 truncate" title={text}>{abbreviate(text, 120)}</span><button type="button" aria-label="Copy cell value" title="Copy value" className="ml-auto hidden shrink-0 text-zinc-400 hover:text-teal-700 group-hover:inline-flex focus:inline-flex" onClick={(event) => void copyValue(event)}>{copied ? <CheckCircle2 className="size-3.5 text-emerald-700" /> : <Copy className="size-3.5" />}</button></span>;
 }
 
+/**
+ * Copy table, CSV, and Excel write the grid's own headers (export-only columns
+ * are `hide: true` column definitions), with context columns first and IDs last.
+ */
 export function ImpactGrid({ rowData, columnDefs, emptyMessage, exportFileName, exportContext, fitRows = false }: {
   rowData: GridRow[];
   columnDefs: ColDef<GridRow>[];
@@ -49,9 +54,10 @@ export function ImpactGrid({ rowData, columnDefs, emptyMessage, exportFileName, 
 }) {
   const gridHeight = fitRows ? Math.min(420, 40 + Math.max(rowData.length, 3) * 42 + 2) : 420;
   const [tableCopied, setTableCopied] = useState(false);
+  const exportTable = () => toExportTable(rowData, columnDefs as ExportColumn[], exportContext);
 
   async function copyTable() {
-    await copyText(toTabSeparatedValues(withExportContext(rowData, exportContext)));
+    await copyText(exportTableToTsv(exportTable()));
     setTableCopied(true);
     window.setTimeout(() => setTableCopied(false), 1800);
   }
@@ -61,8 +67,8 @@ export function ImpactGrid({ rowData, columnDefs, emptyMessage, exportFileName, 
       <span className="text-xs text-zinc-500">{rowData.length} {rowData.length === 1 ? "row" : "rows"}</span>
       <div className="flex gap-2">
         <Button type="button" variant="outline" size="sm" title="Copy all table values" disabled={!rowData.length} onClick={() => void copyTable()}>{tableCopied ? <CheckCircle2 className="size-3.5 text-emerald-700" /> : <ClipboardCopy className="size-3.5" />} {tableCopied ? "Copied" : "Copy table"}</Button>
-        <Button type="button" variant="outline" size="sm" title="Download CSV" disabled={!rowData.length} onClick={() => downloadCsv(rowData, exportContext, exportFileName)}><Download className="size-3.5" /> CSV</Button>
-        <Button type="button" variant="outline" size="sm" title="Download Excel-compatible file" disabled={!rowData.length} onClick={() => downloadExcel(rowData, exportContext, exportFileName)}><FileSpreadsheet className="size-3.5" /> Excel</Button>
+        <Button type="button" variant="outline" size="sm" title="Download CSV" disabled={!rowData.length} onClick={() => downloadExportCsv(exportTable(), exportFileName)}><Download className="size-3.5" /> CSV</Button>
+        <Button type="button" variant="outline" size="sm" title="Download Excel-compatible file" disabled={!rowData.length} onClick={() => downloadExportExcel(exportTable(), exportFileName)}><FileSpreadsheet className="size-3.5" /> Excel</Button>
       </div>
     </div>
     <div className="min-w-[720px]" style={{ height: gridHeight }}>

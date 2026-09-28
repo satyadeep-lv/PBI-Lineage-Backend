@@ -5,6 +5,7 @@ import { Button } from "~/components/ui/button";
 import { LineageDiagram } from "~/components/workspace/lineage/lineage-diagram";
 import type { LineageGraph } from "~/components/workspace/lineage/lineage-types";
 import { ApiError, isSessionExpired, requestJson } from "~/lib/lineage-api";
+import { COLUMN, VALUE } from "~/lib/naming";
 import { useAppStore } from "~/stores/app-store";
 
 type SnowflakeObjectReference = {
@@ -67,10 +68,28 @@ const TRACE_LIMITS = {
 export type SnowflakeTraceTarget = { qualifiedName: string; label: string };
 export type SnowflakeColumnTarget = { qualifiedName: string; columns: string[] };
 
+/** Trace metric and result-table labels that are not shared grid headers (Docs/07-column-naming-standard.md). */
+const LABEL = {
+  objectsTraced: "Objects traced",
+  dependenciesFound: "Dependencies found",
+  queriesRead: "Queries read",
+  fromObject: "From object",
+  toObject: "To object",
+  objectLevel: "Object level",
+  dependencyType: "Dependency type",
+  process: "Process",
+} as const;
+
+/** Snowflake's object level (`TABLE`, `COLUMN` …) in sentence case: "Table", "Column". */
+function objectLevelLabel(domain: string | null | undefined): string {
+  const value = (domain ?? "").trim().replace(/_/g, " ").toLocaleLowerCase();
+  return value ? value.charAt(0).toLocaleUpperCase() + value.slice(1) : VALUE.notAvailable;
+}
+
 function processSummary(process: unknown): string {
-  if (process == null) return "--";
+  if (process == null) return VALUE.notAvailable;
   if (typeof process === "string") return process;
-  if (Array.isArray(process)) return process.length ? `${process.length} steps` : "--";
+  if (Array.isArray(process)) return process.length ? `${process.length} steps` : VALUE.notAvailable;
   if (typeof process === "object") {
     const record = process as Record<string, unknown>;
     const name = record.name ?? record.query_id ?? record.id;
@@ -124,14 +143,14 @@ export function SnowflakeObjectLineage({ targets }: { targets: SnowflakeTraceTar
     <SnowflakeTraceHeading
       icon={<GitBranch className="size-4 text-teal-700" />}
       title="Snowflake object lineage"
-      text="Pick a fully qualified table from the evidence above and trace it upstream inside Snowflake, to see what feeds it. This uses the Snowflake connection, which is separate from Power BI sign-in."
+      text="Pick a database table from the data sources above and trace it upstream inside Snowflake, to see what feeds it. This uses the Snowflake connection, which is separate from Power BI sign-in."
     />
 
     {!targets.length
-      ? <p className="px-4 py-6 text-sm text-zinc-500">No fully qualified database tables were found for this report, so there is nothing to trace. Rows whose source could not be resolved, and non-database sources such as files or URLs, are not traceable.</p>
+      ? <p className="px-4 py-6 text-sm text-zinc-500">No database tables were found for this report, so there is nothing to trace. Data sources that were not found, and data sources that are not databases, such as files or URLs, cannot be traced.</p>
       : <div className="space-y-5 p-4">
           <div className="grid gap-4 md:grid-cols-[minmax(0,3fr)_auto] md:items-end">
-            <SelectField id="snowflake-trace-object" label="Fully qualified table" value={selected?.qualifiedName ?? ""} onChange={setSelectedName} mono>
+            <SelectField id="snowflake-trace-object" label={COLUMN.databaseTable} value={selected?.qualifiedName ?? ""} onChange={setSelectedName} mono>
               {targets.map((target) => <option key={target.qualifiedName} value={target.qualifiedName}>{target.label}</option>)}
             </SelectField>
             <Button type="button" disabled={!selected || isTracing} onClick={() => selected && void trace({ object_name: selected.qualifiedName, object_domain: "TABLE", direction: "UPSTREAM" })} className="h-10">
@@ -168,13 +187,13 @@ export function SnowflakeColumnLineage({ targets }: { targets: SnowflakeColumnTa
     />
 
     {!targets.length
-      ? <p className="px-4 py-6 text-sm text-zinc-500">No database columns resolved for this report's semantic objects, so there is nothing to trace.</p>
+      ? <p className="px-4 py-6 text-sm text-zinc-500">No database columns were found for this report's semantic objects, so there is nothing to trace.</p>
       : <div className="space-y-5 p-4">
           <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] md:items-end">
-            <SelectField id="snowflake-column-object" label="Fully qualified table" value={selectedTable?.qualifiedName ?? ""} onChange={(value) => { setSelectedName(value); setSelectedColumn(""); }} mono>
+            <SelectField id="snowflake-column-object" label={COLUMN.databaseTable} value={selectedTable?.qualifiedName ?? ""} onChange={(value) => { setSelectedName(value); setSelectedColumn(""); }} mono>
               {targets.map((target) => <option key={target.qualifiedName} value={target.qualifiedName}>{target.qualifiedName}</option>)}
             </SelectField>
-            <SelectField id="snowflake-column-name" label="Database column" value={column} onChange={setSelectedColumn} mono>
+            <SelectField id="snowflake-column-name" label={COLUMN.databaseColumn} value={column} onChange={setSelectedColumn} mono>
               {(selectedTable?.columns ?? []).map((name) => <option key={name} value={name}>{name}</option>)}
             </SelectField>
             <Button type="button" disabled={!selectedTable || !column || isTracing} onClick={() => selectedTable && column && void trace({ object_name: selectedTable.qualifiedName, column_name: column, object_domain: "COLUMN", direction: "UPSTREAM" })} className="h-10">
@@ -215,39 +234,39 @@ function SnowflakeTraceOutcome({ result, error, diagram }: { result: SnowflakeTr
 
   return <div className="space-y-4">
     <div className="grid border-y border-zinc-200 sm:grid-cols-4">
-      <TraceMetric label="Objects" value={String(result.snapshot.object_count)} />
-      <TraceMetric label="Dependencies" value={String(result.snapshot.dependency_count)} />
-      <TraceMetric label="Queries read" value={String(result.query_count)} />
-      <TraceMetric label="Account" value={result.account_identifier} />
+      <TraceMetric label={LABEL.objectsTraced} value={String(result.snapshot.object_count)} />
+      <TraceMetric label={LABEL.dependenciesFound} value={String(result.snapshot.dependency_count)} />
+      <TraceMetric label={LABEL.queriesRead} value={String(result.query_count)} />
+      <TraceMetric label={COLUMN.databaseAccount} value={result.account_identifier} />
     </div>
 
-    {result.truncated && <div className="border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">This trace hit a limit before the graph was complete, so what is shown is partial. Depth was capped at {result.max_depth}.</div>}
+    {result.truncated && <div className="border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">This trace hit a limit before it was complete, so only part of the lineage is shown. It stops at {result.max_depth} steps away.</div>}
     {allWarnings.length > 0 && <div className="space-y-1 border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">{allWarnings.map((warning, index) => <p key={`${warning.code}-${index}`}>{warning.message}</p>)}</div>}
 
     <p className="text-xs text-zinc-500">{result.direction === "UPSTREAM" ? "Upstream of" : "Downstream of"} <span className="font-mono text-zinc-700">{startedFrom}</span></p>
 
     {dependencies.length === 0
-      ? <p className="border border-zinc-200 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">Snowflake reported no {result.direction.toLowerCase()} dependencies for this {result.object_domain.toLowerCase()}. That is an answer, not a failure — a column loaded straight from an ingested table genuinely has none.</p>
+      ? <p className="border border-zinc-200 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">Snowflake reported no {result.direction.toLowerCase()} dependencies for this {objectLevelLabel(result.object_domain).toLowerCase()}. That is an answer, not a failure — a column loaded straight from an ingested table genuinely has none.</p>
       : <>
           <div className="overflow-x-auto border border-zinc-200">
             <table className="w-full min-w-[860px] border-collapse text-sm">
               <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
                 <tr>
-                  <th className="border-b border-zinc-200 px-3 py-2">Source</th>
-                  <th className="border-b border-zinc-200 px-3 py-2">Target</th>
-                  <th className="border-b border-zinc-200 px-3 py-2">Domain</th>
-                  <th className="border-b border-zinc-200 px-3 py-2">Dependency</th>
-                  <th className="border-b border-zinc-200 px-3 py-2">Distance</th>
-                  <th className="border-b border-zinc-200 px-3 py-2">Process</th>
+                  <th className="border-b border-zinc-200 px-3 py-2">{LABEL.fromObject}</th>
+                  <th className="border-b border-zinc-200 px-3 py-2">{LABEL.toObject}</th>
+                  <th className="border-b border-zinc-200 px-3 py-2">{LABEL.objectLevel}</th>
+                  <th className="border-b border-zinc-200 px-3 py-2">{LABEL.dependencyType}</th>
+                  <th className="border-b border-zinc-200 px-3 py-2">{COLUMN.stepsAway}</th>
+                  <th className="border-b border-zinc-200 px-3 py-2">{LABEL.process}</th>
                 </tr>
               </thead>
               <tbody>
                 {dependencies.map((dependency, index) => <tr key={`${dependency.source.object_id}-${dependency.target.object_id}-${index}`} className="align-top hover:bg-zinc-50">
                   <td className="border-b border-zinc-100 px-3 py-2 font-mono text-xs">{qualify(dependency.source)}</td>
                   <td className="border-b border-zinc-100 px-3 py-2 font-mono text-xs">{qualify(dependency.target)}</td>
-                  <td className="border-b border-zinc-100 px-3 py-2 text-xs">{dependency.target.object_domain}</td>
+                  <td className="border-b border-zinc-100 px-3 py-2 text-xs">{objectLevelLabel(dependency.target.object_domain)}</td>
                   <td className="border-b border-zinc-100 px-3 py-2 text-xs">{dependency.dependency_type}</td>
-                  <td className="border-b border-zinc-100 px-3 py-2 text-xs">{dependency.distance ?? "--"}</td>
+                  <td className="border-b border-zinc-100 px-3 py-2 text-xs">{dependency.distance ?? VALUE.notAvailable}</td>
                   <td className="border-b border-zinc-100 px-3 py-2 text-xs">{processSummary(dependency.process)}</td>
                 </tr>)}
               </tbody>
@@ -268,7 +287,7 @@ function SnowflakeDirectedLineageDiagram({ result, level }: { result: SnowflakeT
     verticalFlow="up"
     collapseDirection="upstream"
     focusNodeId={focusNodeId}
-    title={isColumn ? "Snowflake column lineage graph" : "Snowflake table lineage"}
+    title={isColumn ? "Snowflake column lineage" : "Snowflake table lineage"}
     emptyText={isColumn ? "No Snowflake column dependencies were returned." : "No Snowflake table dependencies were returned."}
     canvasClassName={isColumn ? "h-[680px] min-h-[520px]" : "h-[840px] min-h-[560px]"}
     nodeSeparation={20}
@@ -286,25 +305,35 @@ function buildSnowflakeGraph(result: SnowflakeTraceResponse, level: "table" | "c
 
   const register = (qualifiedName: string, label: string, detail?: string) => {
     const displayName = qualifiedName.trim();
-    const key = displayName.toUpperCase();
+    const key = identityKey(displayName);
     if (displayName && !names.has(key)) names.set(key, { qualifiedName: displayName, label: label || displayName, detail });
     return key;
   };
 
-  const startingTable = result.starting_object_name.trim();
-  const startingName = result.starting_column_name && isColumn
-    ? `${result.starting_object_name}.${result.starting_column_name}`
-    : result.starting_object_name;
-  const focusKey = register(startingName, startingTable, isColumn ? result.starting_column_name ?? undefined : undefined);
+  const nearest = new Map<string, number>();
   result.snapshot.dependencies.forEach((dependency) => {
     const source = register(referenceName(dependency.source, isColumn), tableName(dependency.source), isColumn ? dependency.source.column_name ?? undefined : undefined);
     const target = register(referenceName(dependency.target, isColumn), tableName(dependency.target), isColumn ? dependency.target.column_name ?? undefined : undefined);
     if (!source || !target || source === target) return;
+    // The traced object sits at the near end of the closest hop: the target upstream, the source downstream.
+    const near = result.direction === "DOWNSTREAM" ? source : target;
+    const distance = dependency.distance ?? Number.MAX_SAFE_INTEGER;
+    if (distance < (nearest.get(near) ?? Number.MAX_SAFE_INTEGER)) nearest.set(near, distance);
     const pairKey = `${source}\u0000${target}`;
     if (seenPairs.has(pairKey)) return;
     seenPairs.add(pairKey);
     pairs.push({ source, target });
   });
+
+  // The traced object is always one of the dependency ends. It is found among them rather than
+  // added on its own, so a naming difference can never leave it as a second, unconnected node.
+  const startingName = result.starting_column_name && isColumn
+    ? `${result.starting_object_name}.${result.starting_column_name}`
+    : result.starting_object_name;
+  const nearestKey = [...nearest].sort((a, b) => a[1] - b[1])[0]?.[0];
+  const focusKey = names.has(identityKey(startingName))
+    ? identityKey(startingName)
+    : nearestKey ?? register(startingName, result.starting_object_name, isColumn ? result.starting_column_name ?? undefined : undefined);
 
   const idByKey = new Map(Array.from(names.keys()).map((key, index) => [key, `snowflake-${level}-${index}`]));
   const nodes = Array.from(names, ([key, name]) => ({
@@ -324,20 +353,31 @@ function buildSnowflakeGraph(result: SnowflakeTraceResponse, level: "table" | "c
   return { graph: { nodes, edges }, focusNodeId: idByKey.get(focusKey) };
 }
 
+/** One key per Snowflake object: unquoted Snowflake names are case-insensitive, and quoting varies between the root and the rows. */
+function identityKey(name: string): string {
+  return name.replace(/"/g, "").trim().toUpperCase();
+}
+
 function referenceName(reference: SnowflakeObjectReference, includeColumn: boolean): string {
   const table = tableName(reference);
   return includeColumn && reference.column_name ? `${table}.${reference.column_name}` : table;
 }
 
+/**
+ * The table (or view) itself, without the column. Built from the name parts, because a
+ * column reference's `qualified_name` already ends in the column ("DB.SCHEMA.TABLE.COLUMN").
+ */
 function tableName(reference: SnowflakeObjectReference): string {
-  const qualifiedName = reference.qualified_name?.trim();
-  if (qualifiedName) return qualifiedName;
-  return [reference.database, reference.schema_name, reference.object_name].filter(Boolean).join(".");
+  const parts = [reference.database, reference.schema_name, reference.object_name].map((part) => part?.trim()).filter(Boolean);
+  if (parts.length) return parts.join(".");
+  const qualifiedName = reference.qualified_name?.trim() ?? "";
+  const column = reference.column_name?.trim();
+  return column && identityKey(qualifiedName).endsWith(`.${identityKey(column)}`) ? qualifiedName.slice(0, qualifiedName.length - column.length - 1) : qualifiedName;
 }
 
-/** A column trace returns column-level references, so the column is part of the name. */
+/** A column trace returns column-level references, so the column is part of the name, once. */
 function qualify(reference: SnowflakeObjectReference): string {
-  return reference.column_name ? `${reference.qualified_name}.${reference.column_name}` : reference.qualified_name;
+  return referenceName(reference, true);
 }
 
 function TraceMetric({ label, value }: { label: string; value: string }) {

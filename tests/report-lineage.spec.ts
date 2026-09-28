@@ -103,12 +103,12 @@ test("Snowflake object trace renders a collapsible upward table lineage after it
 
   await page.goto("/workspace/report-lineage");
   await expect(page.getByRole("heading", { name: "Report lineage" })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole("tab", { name: "Source DB lineage", exact: true }).click();
-  await page.getByLabel("Fully qualified table").selectOption(snowflakeTarget);
+  await page.getByRole("tab", { name: "Data sources", exact: true }).click();
+  await page.getByLabel("Database table", { exact: true }).selectOption(snowflakeTarget);
   await page.getByRole("button", { name: "Trace lineage" }).click();
 
   // The API's tabular evidence stays first, followed by the table-name-only graph.
-  await expect(page.getByRole("columnheader", { name: "Distance" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Steps away" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Snowflake table lineage" })).toBeVisible();
   const nodes = page.locator(".react-flow__node");
   const edges = page.locator(".react-flow__edge");
@@ -168,20 +168,25 @@ test("Snowflake column trace renders a directed animated graph with column names
 
   await page.goto("/workspace/report-lineage");
   await expect(page.getByRole("heading", { name: "Report lineage" })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole("tab", { name: "Semantic - DB objects mappings", exact: true }).click();
-  await expect(page.getByLabel("Fully qualified table")).toHaveValue(snowflakeColumnTable);
-  await expect(page.getByLabel("Database column")).toHaveValue(snowflakeColumn);
+  await page.getByRole("tab", { name: "Database mapping", exact: true }).click();
+  await expect(page.getByLabel("Database table", { exact: true })).toHaveValue(snowflakeColumnTable);
+  await expect(page.getByLabel("Database column", { exact: true })).toHaveValue(snowflakeColumn);
   await page.getByRole("button", { name: "Trace column" }).click();
 
-  await expect(page.getByRole("columnheader", { name: "Distance" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Snowflake column lineage graph" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Steps away" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Snowflake column lineage", exact: true })).toBeVisible();
+  const targetQualifiedColumn = `${snowflakeColumnTable}.${snowflakeColumn}`;
+  // qualified_name already carries the column, so it must not be appended a second time.
+  await expect(page.getByRole("cell", { name: targetQualifiedColumn, exact: true })).toHaveCount(1);
+  await expect(page.getByRole("cell", { name: `${targetQualifiedColumn}.${snowflakeColumn}` })).toHaveCount(0);
+
+  // Four columns joined by three links: the traced column is one of them, never a fifth, unconnected node.
   const nodes = page.locator(".react-flow__node");
   const edges = page.locator(".react-flow__edge");
   await expect(nodes).toHaveCount(4);
   await expect(edges).toHaveCount(3);
   await expect(page.locator(".react-flow__edge.animated")).toHaveCount(3);
 
-  const targetQualifiedColumn = `${snowflakeColumnTable}.${snowflakeColumn}`;
   const sourceQualifiedColumn = "STAGE.PUBLIC.CLEAN_SALES.NET_AMOUNT";
   const targetNode = nodes.filter({ has: page.getByTitle(targetQualifiedColumn, { exact: true }) });
   const sourceNode = nodes.filter({ has: page.getByTitle(sourceQualifiedColumn, { exact: true }) });
@@ -369,8 +374,10 @@ const snowflakeLineageRows = [
   ["PBI_LINEAGE_DEMO.RAW.DEMO_FILES", "PBI_LINEAGE_DEMO.RAW.RAW_ORDER_LINES", "TABLE", 10, "01c7455f-0002-1e6e-000f-b0220004593e"],
 ] as const;
 
-function snowflakeReference(qualifiedName: string, objectDomain: string, columnName: string | null = null) {
-  const [database, schemaName, ...objectName] = qualifiedName.split(".");
+function snowflakeReference(tableName: string, objectDomain: string, columnName: string | null = null) {
+  const [database, schemaName, ...objectName] = tableName.split(".");
+  // Like the real deep trace, a column reference's qualified_name already ends in the column.
+  const qualifiedName = columnName ? `${tableName}.${columnName}` : tableName;
   return {
     object_id: qualifiedName,
     database,
@@ -421,9 +428,10 @@ const snowflakeColumnLineageRows = [
   ["RAW.PUBLIC.RAW_SALES", "DISCOUNT_AMOUNT", "STAGE.PUBLIC.CLEAN_SALES", "NET_AMOUNT", 2],
 ] as const;
 
+// Snowflake reports a column row's domain as its container's (TABLE), not COLUMN.
 const snowflakeColumnDependencies = snowflakeColumnLineageRows.map(([sourceTable, sourceColumn, targetTable, targetColumn, distance]) => ({
-  source: snowflakeReference(sourceTable, "COLUMN", sourceColumn),
-  target: snowflakeReference(targetTable, "COLUMN", targetColumn),
+  source: snowflakeReference(sourceTable, "TABLE", sourceColumn),
+  target: snowflakeReference(targetTable, "TABLE", targetColumn),
   dependency_type: "GET_LINEAGE",
   distance,
   process: null,
@@ -432,7 +440,7 @@ const snowflakeColumnDependencies = snowflakeColumnLineageRows.map(([sourceTable
 const snowflakeColumnObjects = Array.from(new Map(
   snowflakeColumnDependencies
     .flatMap((dependency) => [dependency.source, dependency.target])
-    .map((reference) => [`${reference.qualified_name}.${reference.column_name}`, reference]),
+    .map((reference) => [reference.qualified_name, reference]),
 ).values());
 
 const snowflakeColumnTraceResponse = {

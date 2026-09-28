@@ -140,7 +140,7 @@ export function ObjectSearchSelect({ id, label, placeholder, entries, selectedKe
 export type SearchGroup = {
   id: string;
   heading: string;
-  /** Short tag shown on a selected entry's chip, e.g. "Model" or "Database". */
+  /** Short tag shown on a selected entry's chip, e.g. "Semantic" or "Database". */
   chipLabel: string;
   entries: SearchEntry[];
 };

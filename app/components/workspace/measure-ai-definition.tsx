@@ -15,20 +15,38 @@ import {
 import { parseAnswer, sectionTabs } from "~/lib/power-ai-answer";
 import { contextForEntity, entityQuestion, type AnswerEntity } from "~/lib/power-ai-entities";
 import { evidenceLine, groupBySection, isContextItem } from "~/lib/power-ai-evidence";
+import { COLUMN, VALUE } from "~/lib/naming";
 import { AI_ERROR_COPY } from "~/lib/use-power-ai-chat";
 import { prefersReducedMotion } from "~/lib/use-revealed-text";
 import { cn } from "~/lib/utils";
 import { useAppStore } from "~/stores/app-store";
 import { usePowerAiStore } from "~/stores/power-ai-store";
 
-/** One selectable measure, carrying the mapping evidence already on screen for it. */
+/** One selectable measure, carrying the mapping already on screen for it. */
 export type MeasureDefinitionTarget = {
   key: string;
   table: string;
   name: string;
   daxExpression: string;
-  sourceColumn: string;
-  sourceTable: string;
+  /** The Database columns cell of the mapping grid: names joined with ", ", or a standard missing value. */
+  databaseColumns: string;
+  /** The Database tables cell of the mapping grid: full names joined with ", ", or a standard missing value. */
+  databaseTables: string;
+};
+
+/** Field labels of the downloaded definition that are not grid headers (Docs/07-column-naming-standard.md). */
+const LABEL = {
+  answerStatus: "Answer status",
+  writtenBy: "Written by",
+} as const;
+
+/** The answer status in plain words, never the raw API code. */
+const ANSWER_STATUS_LABELS: Record<AiChatResponse["status"], string> = {
+  answered: "Answered",
+  insufficient_evidence: "Not enough evidence",
+  ambiguous: "Ambiguous",
+  conflicting_evidence: "Conflicting evidence",
+  out_of_scope: "Out of scope",
 };
 
 /**
@@ -91,14 +109,14 @@ function toDocument(target: MeasureDefinitionTarget, response: AiChatResponse, c
   const lines = [
     heading(1, target.name),
     "",
-    field("Semantic table", target.table),
-    field("Workspace", context.workspaceName ?? "Not reported"),
-    field("Report", context.reportName ?? "Not reported"),
-    field("Semantic model", context.semanticModelName ?? "Not reported"),
-    field("Source column", target.sourceColumn),
-    field("Source table", target.sourceTable),
-    field("Answer status", response.status),
-    field("Written by", response.usage ? `Power AI (${response.usage.model})` : "Lineage evidence"),
+    field(COLUMN.semanticTable, target.table),
+    field(COLUMN.workspaceName, context.workspaceName ?? VALUE.notAvailable),
+    field(COLUMN.reportName, context.reportName ?? VALUE.notAvailable),
+    field(COLUMN.semanticModel, context.semanticModelName ?? VALUE.notAvailable),
+    field(COLUMN.databaseColumns, target.databaseColumns),
+    field(COLUMN.databaseTables, target.databaseTables),
+    field(LABEL.answerStatus, ANSWER_STATUS_LABELS[response.status] ?? response.status),
+    field(LABEL.writtenBy, response.usage ? `Power AI (${response.usage.model})` : "Lineage evidence"),
     "",
     heading(2, "Definition"),
     "",
@@ -230,7 +248,7 @@ export function MeasureAiDefinition({ measures, context }: { measures: MeasureDe
   return <section className="border border-zinc-200">
     <div className="border-b border-zinc-200 bg-zinc-50 px-4 py-3">
       <p className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="size-4 text-teal-700" /> Measure definition with Power AI</p>
-      <p className="mt-0.5 max-w-3xl text-xs leading-5 text-zinc-500">Select a measure for its full definition: what it calculates, its DAX, the tables and columns that DAX reads, what builds on it, and which report visuals would change with it. Power AI writes this from verified lineage evidence when AI is enabled, and shows the evidence directly when it is not, so it works either way. Click a name to explore it; the downloads include every fact behind the answer.</p>
+      <p className="mt-0.5 max-w-3xl text-xs leading-5 text-zinc-500">Select a measure for its full definition: what it calculates, its DAX, the semantic tables and database columns that DAX reads, what builds on it, and which report visuals would change with it. Power AI writes this from verified lineage evidence when AI is enabled, and shows the evidence directly when it is not, so it works either way. Click a name to explore it; the downloads include every fact behind the answer.</p>
     </div>
 
     {!measures.length
@@ -262,8 +280,8 @@ export function MeasureAiDefinition({ measures, context }: { measures: MeasureDe
                     <AuthorBadge usage={response.usage} />
                   </div>
                   <p className="text-xs text-zinc-500">
-                    Table <span className="font-medium text-zinc-700">{target.table}</span>
-                    {context.semanticModelName && <> · Model <span className="font-medium text-zinc-700">{context.semanticModelName}</span></>}
+                    {COLUMN.semanticTable} <span className="font-medium text-zinc-700">{target.table}</span>
+                    {context.semanticModelName && <> · {COLUMN.semanticModel} <span className="font-medium text-zinc-700">{context.semanticModelName}</span></>}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">

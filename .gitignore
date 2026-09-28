@@ -14,5 +14,6 @@
 
 PROJECT_CONTEXT.md
 REF_DOC/
-.claude/
+.claude
 Context/
+.claude/settings.json

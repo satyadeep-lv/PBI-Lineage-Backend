@@ -8,6 +8,7 @@ import { PowerBiAuthRequired } from "~/components/workspace/auth-required";
 import { DetailItem, type Report, type Workspace } from "~/components/workspace/evidence-ui";
 import { ReportEvidence, type ReportBinding, type ReportSection } from "~/components/workspace/report-evidence";
 import { estateDiscoveryKey, ESTATE_DISCOVER_PATH, requestJson } from "~/lib/lineage-api";
+import { COLUMN, nameWithParent, reportTypeLabel, VALUE } from "~/lib/naming";
 import { cn } from "~/lib/utils";
 import { useAppStore } from "~/stores/app-store";
 import { usePowerAiStore } from "~/stores/power-ai-store";
@@ -81,9 +82,9 @@ export function ReportLineage() {
     });
   }, [selectedReport]);
 
-  if (estateQuery.isLoading) return <LoadingState label="Discovering reports across accessible workspaces" />;
+  if (estateQuery.isLoading) return <LoadingState label="Loading the reports you can open, across all workspaces" />;
   if (estateQuery.isError) return <PowerBiAuthRequired returnTo="Report lineage" />;
-  if (!reportChoices.length) return <EmptyState title="No reports found" text="No accessible reports were returned by estate discovery." />;
+  if (!reportChoices.length) return <EmptyState title="No reports found" text="The list of reports you can open is empty." />;
 
   const binding: ReportBinding | null = selectedReport
     ? {
@@ -98,7 +99,7 @@ export function ReportLineage() {
   return <section className="overflow-hidden rounded-lg border border-border bg-surface">
     <div className="border-b border-border px-5 py-5 sm:px-6">
       <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-start">
-        <div className="flex items-start gap-3"><span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-fabric text-primary-foreground"><GitBranch className="size-5" /></span><div><div className="mb-1 flex flex-wrap items-center gap-2"><span className="text-xs font-semibold uppercase text-fabric">Cross-workspace analysis</span><Badge className="rounded-md border border-fabric/25 bg-accent text-accent-foreground">Report focused</Badge></div><h1 className="text-lg font-semibold">Report lineage</h1><p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Select any accessible report by name — from any workspace — then work through its pages, source database tables, semantic objects, object mappings, and visual field lineage.</p></div></div>
+        <div className="flex items-start gap-3"><span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-fabric text-primary-foreground"><GitBranch className="size-5" /></span><div><div className="mb-1 flex flex-wrap items-center gap-2"><span className="text-xs font-semibold uppercase text-fabric">Cross-workspace analysis</span><Badge className="rounded-md border border-fabric/25 bg-accent text-accent-foreground">Report focused</Badge></div><h1 className="text-lg font-semibold">Report lineage</h1><p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Select any report you can open by name — from any workspace — then work through its pages, data sources, semantic objects, database mapping, and visual fields.</p></div></div>
         <div className="flex shrink-0 flex-col items-start gap-2 xl:items-end">
           <ReportSelector reports={reportChoices} selectedKey={selectedKey} onChange={setSelectedKey} />
           {selectedReport && (
@@ -120,7 +121,7 @@ export function ReportLineage() {
           )}
         </div>
       </div>
-      {selectedReport && <div className="mt-5 grid border-y border-zinc-200 sm:grid-cols-4"><DetailItem label="Workspace" value={selectedReport.workspace.name} /><DetailItem label="Report" value={selectedReport.report.name} /><DetailItem label="Semantic model" value={selectedReport.semanticModelName ?? "Unresolved"} /><DetailItem label="Report type" value={selectedReport.report.report_type ?? "Not reported"} /></div>}
+      {selectedReport && <div className="mt-5 grid border-y border-zinc-200 sm:grid-cols-4"><DetailItem label={COLUMN.workspaceName} value={selectedReport.workspace.name} /><DetailItem label={COLUMN.reportName} value={selectedReport.report.name} /><DetailItem label={COLUMN.semanticModel} value={selectedReport.semanticModelName ?? VALUE.notFound} /><DetailItem label={COLUMN.reportType} value={reportTypeLabel(selectedReport.report.report_type)} /></div>}
     </div>
 
     <div className="space-y-6 p-5 sm:p-6">
@@ -131,7 +132,7 @@ export function ReportLineage() {
 
 function ReportSelector({ reports, selectedKey, onChange }: { reports: ReportChoice[]; selectedKey: string; onChange: (value: string) => void }) {
   const selected = reports.find((report) => report.key === selectedKey) ?? null;
-  return <div className="w-full space-y-1.5 xl:max-w-md"><label htmlFor="report-lineage-report" className="text-xs font-semibold text-zinc-600">Report</label><select id="report-lineage-report" value={selectedKey} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-cyan-800 focus:ring-2 focus:ring-cyan-100"><option value="" disabled>Select a report</option>{reports.map((report) => <option key={report.key} value={report.key}>{report.report.name} - {report.workspace.name}</option>)}</select>{selected && <p className="break-all text-xs text-zinc-500">Selected report ID: <code className="text-zinc-700">{selected.report.id}</code></p>}</div>;
+  return <div className="w-full space-y-1.5 xl:max-w-md"><label htmlFor="report-lineage-report" className="text-xs font-semibold text-zinc-600">Report</label><select id="report-lineage-report" value={selectedKey} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-cyan-800 focus:ring-2 focus:ring-cyan-100"><option value="" disabled>Select a report</option>{reports.map((report) => <option key={report.key} value={report.key}>{nameWithParent(report.report.name, report.workspace.name)}</option>)}</select>{selected && <p className="break-all text-xs text-zinc-500">{COLUMN.reportId}: <code className="text-zinc-700">{selected.report.id}</code></p>}</div>;
 }
 
 function LoadingState({ label }: { label: string }) { return <div className={cn("flex min-h-[560px] items-center justify-center gap-2 rounded-lg border border-border bg-subtle text-sm text-muted-foreground")}><Loader2 className="size-4 animate-spin text-fabric" />{label}</div>; }

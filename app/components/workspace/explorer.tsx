@@ -33,6 +33,7 @@ import {
 } from "~/components/workspace/evidence-ui";
 import { ReportEvidence, type ReportBinding, type ReportSection } from "~/components/workspace/report-evidence";
 import { requestJson, WORKSPACE_LIST_PATH, workspaceListKey } from "~/lib/lineage-api";
+import { COLUMN, exportOnlyColumn, reportFormatLabel, reportTypeLabel, storageModeLabel, VALUE, yesNo } from "~/lib/naming";
 import { DEFAULT_SCAN_FLAGS, workspacePayload, type ScannerWorkspace } from "~/lib/scanner-api";
 import { useWorkspaceScan } from "~/lib/use-workspace-scan";
 import { cn } from "~/lib/utils";
@@ -45,10 +46,33 @@ type WorkspaceResponse = { workspaces: Workspace[] };
 type ReportsResponse = { reports: Report[] };
 type SemanticModelsResponse = { semantic_models: SemanticModel[] };
 
+/** Explorer labels from Docs/07-column-naming-standard.md that the shared glossary (~/lib/naming) does not hold yet. */
+const LABEL = {
+  pageBadge: "Workspace browser",
+  workspaceContent: "Workspace content",
+  reportDetails: "Report details",
+  appsUsingWorkspace: "Apps using this workspace",
+} as const;
+
+/** Explorer cell values from the standard that VALUE does not hold yet. */
+const EXPLORER_VALUE = {
+  /** The report's semantic model lives in a different workspace. */
+  inAnotherWorkspace: "In another workspace",
+  /** A dashboard that no Power BI app includes. */
+  notInAnApp: "Not in an app",
+  itemTypeReport: "Report",
+  itemTypeSemanticModel: "Semantic model",
+} as const;
+
 const tabs: Array<{ id: ExplorerTab; label: string; shortLabel: string }> = [
-  { id: "assets", label: "1. Reports, dashboards, apps, and access", shortLabel: "Assets & access" },
-  { id: "reports", label: "2. Report-scoped evidence", shortLabel: "Reports" },
+  { id: "assets", label: "1. Reports, semantic models, dashboards, apps, and owners in the selected workspace", shortLabel: LABEL.workspaceContent },
+  { id: "reports", label: "2. Pages, data sources, semantic objects, database mapping, and visual fields of the selected report", shortLabel: LABEL.reportDetails },
 ];
+
+/** Export file names follow `explorer-<workspace>-<grid>`. */
+function explorerFileName(workspaceName: string | undefined, grid: string) {
+  return `explorer-${filePart(workspaceName)}-${grid}`;
+}
 
 export function Explorer() {
   const apiOrigin = useAppStore((state) => state.apiOrigin);
@@ -109,8 +133,8 @@ export function Explorer() {
     }
   }, [reports, selectedReportId]);
 
-  // A semantic-model deep link opens a report bound to that model, exactly like
-  // picking the model in Assets & access; with no bound report it stays there.
+  // A semantic-model deep link opens a report connected to that model, exactly like
+  // picking the model in Workspace content; with no connected report it stays there.
   useEffect(() => {
     if (!requestedModelId || !reportsQuery.isSuccess) return;
     const boundReport = reports.find((report) => report.dataset_id === requestedModelId);
@@ -151,9 +175,9 @@ export function Explorer() {
           <div className="flex items-start gap-3">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-fabric text-primary-foreground"><Network className="size-5" /></span>
             <div>
-              <div className="mb-1 flex flex-wrap items-center gap-2"><span className="text-xs font-semibold uppercase text-fabric">Power BI</span><Badge className="rounded-md border border-fabric/25 bg-accent text-accent-foreground">Name-based explorer</Badge></div>
+              <div className="mb-1 flex flex-wrap items-center gap-2"><span className="text-xs font-semibold uppercase text-fabric">Power BI</span><Badge className="rounded-md border border-fabric/25 bg-accent text-accent-foreground">{LABEL.pageBadge}</Badge></div>
               <h1 className="text-lg font-semibold">Explorer</h1>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-zinc-500">Choose a workspace, review its assets, then pick a report to see its pages, source database tables, semantic objects, and visual field lineage.</p>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-zinc-500">Choose a workspace, review its content, then pick a report to see its pages, data sources, semantic objects, database mapping, and visual fields.</p>
             </div>
           </div>
           <NameSelector id="explorer-workspace" label="Workspace" items={workspaces} selectedId={selectedWorkspaceId} onChange={setSelectedWorkspaceId} />
@@ -172,7 +196,7 @@ export function Explorer() {
       </div>
 
       <div className="p-5 sm:p-6">
-        {activeTab === "assets" && <AssetsAccessTab workspace={selectedWorkspace} reports={reports} semanticModels={semanticModels} isLoading={reportsQuery.isLoading || semanticModelsQuery.isLoading} error={reportsQuery.error ?? semanticModelsQuery.error} scan={scan} onReportSelect={(reportId) => { setSelectedReportId(reportId); setActiveReportSection("report-detail"); setActiveTab("reports"); }} onSemanticModelSelect={(modelId) => {
+        {activeTab === "assets" && <WorkspaceContentTab workspace={selectedWorkspace} reports={reports} semanticModels={semanticModels} isLoading={reportsQuery.isLoading || semanticModelsQuery.isLoading} error={reportsQuery.error ?? semanticModelsQuery.error} scan={scan} onReportSelect={(reportId) => { setSelectedReportId(reportId); setActiveReportSection("report-detail"); setActiveTab("reports"); }} onSemanticModelSelect={(modelId) => {
           const boundReport = reports.find((report) => report.dataset_id === modelId);
           if (!boundReport) return;
           setSelectedReportId(boundReport.id);
@@ -191,14 +215,14 @@ export function Explorer() {
 }
 
 function ExplorerGuidance() {
-  return <div className="grid border-b border-border bg-subtle md:grid-cols-3"><GuidanceStep number="1" title="Choose business context" text="Start with the workspace and report people recognize." /><GuidanceStep number="2" title="Pick a report" text="Everything in the Reports tab is scoped to the report selected there." /><GuidanceStep number="3" title="Trace evidence" text="Work through page details, source DB lineage, semantic objects, and report visuals." /></div>;
+  return <div className="grid border-b border-border bg-subtle md:grid-cols-3"><GuidanceStep number="1" title="Choose business context" text="Start with the workspace and report people recognize." /><GuidanceStep number="2" title="Pick a report" text={`Everything in the ${LABEL.reportDetails} tab is about the report selected there.`} /><GuidanceStep number="3" title="Trace the report" text="Work through Pages, Data sources, Semantic objects, Database mapping, and Visual fields." /></div>;
 }
 
 function GuidanceStep({ number, title, text }: { number: string; title: string; text: string }) {
   return <div className="flex gap-3 border-b border-border px-5 py-4 last:border-b-0 md:border-b-0 md:border-r md:px-6 md:last:border-r-0"><span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-fabric text-xs font-semibold text-primary-foreground">{number}</span><div><p className="text-sm font-semibold">{title}</p><p className="mt-0.5 text-xs leading-5 text-muted-foreground">{text}</p></div></div>;
 }
 
-function AssetsAccessTab({ workspace, reports, semanticModels, isLoading, error, scan, onReportSelect, onSemanticModelSelect }: {
+function WorkspaceContentTab({ workspace, reports, semanticModels, isLoading, error, scan, onReportSelect, onSemanticModelSelect }: {
   workspace: Workspace | null;
   reports: Report[];
   semanticModels: SemanticModel[];
@@ -209,13 +233,28 @@ function AssetsAccessTab({ workspace, reports, semanticModels, isLoading, error,
   onSemanticModelSelect: (id: string) => void;
 }) {
   const modelNames = new Map(semanticModels.map((model) => [model.id, model.name]));
-  const reportRows: ExplorerGridRow[] = reports.map((report) => ({ id: report.id, reportId: report.id, name: report.name, type: report.report_type ?? "Report", semanticModel: report.dataset_id ? modelNames.get(report.dataset_id) ?? (report.dataset_workspace_id ? "Model in another workspace" : "External or unresolved model") : "No model returned", format: report.format ?? "--", access: report.is_owned_by_me ? "You" : "Shared" }));
-  const modelRows: ExplorerGridRow[] = semanticModels.map((model) => ({ id: model.id, semanticModelId: model.id, name: model.name, storage: model.target_storage_mode ?? "--", refresh: model.is_refreshable ? "Refreshable" : "Not reported", gateway: model.is_on_prem_gateway_required ? "Required" : "Not required" }));
+  const reportRows: ExplorerGridRow[] = reports.map((report) => ({
+    id: report.id,
+    reportId: report.id,
+    name: report.name,
+    type: reportTypeLabel(report.report_type),
+    semanticModel: report.dataset_id ? modelNames.get(report.dataset_id) ?? (report.dataset_workspace_id ? EXPLORER_VALUE.inAnotherWorkspace : VALUE.notFound) : VALUE.notAvailable,
+    format: reportFormatLabel(report.format),
+    ownedByYou: yesNo(report.is_owned_by_me),
+  }));
+  const modelRows: ExplorerGridRow[] = semanticModels.map((model) => ({
+    id: model.id,
+    semanticModelId: model.id,
+    name: model.name,
+    storage: storageModeLabel(model.target_storage_mode),
+    refresh: yesNo(model.is_refreshable),
+    gateway: yesNo(model.is_on_prem_gateway_required),
+  }));
   if (isLoading) return <ExplorerLoading label="Loading reports and semantic models" />;
-  if (error) return <ExplorerError text="Report or semantic-model inventory is unavailable for this workspace." />;
+  if (error) return <ExplorerError text="The reports and semantic models for this workspace could not be loaded." />;
   return <div className="space-y-8">
-    <div><SectionHeading icon={<Files className="size-5" />} title="Reports" text="Select a report by name to inspect its pages, report structure, and semantic lineage." /><ExplorerGrid rowData={reportRows} columnDefs={[{ field: "name", headerName: "Report name", minWidth: 230, flex: 1.4 }, { field: "type", headerName: "Type", minWidth: 120 }, { field: "semanticModel", headerName: "Semantic model", minWidth: 220, flex: 1.2 }, { field: "format", headerName: "Format", minWidth: 120 }, { field: "access", headerName: "Access", minWidth: 110 }]} onRowClick={(row) => onReportSelect(row.id)} emptyMessage="No reports were returned for this workspace." exportFileName={`${filePart(workspace?.name)}-reports`} exportContext={makeExportContext(workspace)} /></div>
-    <div><SectionHeading icon={<Layers3 className="size-5" />} title="Semantic models" text="These models resolve report field references and detailed object metadata." /><ExplorerGrid rowData={modelRows} columnDefs={[{ field: "name", headerName: "Model name", minWidth: 260, flex: 1.5 }, { field: "storage", headerName: "Storage mode", minWidth: 160 }, { field: "refresh", headerName: "Refresh", minWidth: 140 }, { field: "gateway", headerName: "Gateway", minWidth: 140 }]} onRowClick={(row) => onSemanticModelSelect(row.id)} emptyMessage="No semantic models were returned for this workspace." exportFileName={`${filePart(workspace?.name)}-semantic-models`} exportContext={makeExportContext(workspace)} /></div>
+    <div><SectionHeading icon={<Files className="size-5" />} title="Reports" text="Select a report to see its pages, data sources, semantic objects, and visual fields. Report format is how the report file is stored: PBIR, PBIR (legacy), or PBIX." /><ExplorerGrid rowData={reportRows} columnDefs={[{ field: "name", headerName: COLUMN.reportName, minWidth: 230, flex: 1.4 }, { field: "type", headerName: COLUMN.reportType, minWidth: 150 }, { field: "semanticModel", headerName: COLUMN.semanticModel, minWidth: 220, flex: 1.2 }, { field: "format", headerName: COLUMN.reportFormat, minWidth: 140 }, { field: "ownedByYou", headerName: COLUMN.ownedByYou, minWidth: 140 }, exportOnlyColumn<ExplorerGridRow>("reportId", COLUMN.reportId)]} onRowClick={(row) => onReportSelect(row.id)} emptyMessage="No reports were returned for this workspace." exportFileName={explorerFileName(workspace?.name, "reports")} exportContext={makeExportContext(workspace)} /></div>
+    <div><SectionHeading icon={<Layers3 className="size-5" />} title="Semantic models" text="Select a semantic model to see its semantic objects through a report connected to it." /><ExplorerGrid rowData={modelRows} columnDefs={[{ field: "name", headerName: COLUMN.semanticModel, minWidth: 260, flex: 1.5 }, { field: "storage", headerName: COLUMN.storageMode, minWidth: 160 }, { field: "refresh", headerName: COLUMN.refreshEnabled, minWidth: 160 }, { field: "gateway", headerName: COLUMN.gatewayRequired, minWidth: 170 }, exportOnlyColumn<ExplorerGridRow>("semanticModelId", COLUMN.semanticModelId)]} onRowClick={(row) => onSemanticModelSelect(row.id)} emptyMessage="No semantic models were returned for this workspace." exportFileName={explorerFileName(workspace?.name, "semantic-models")} exportContext={makeExportContext(workspace)} /></div>
     <ScannerEvidencePanel workspace={workspace} scan={scan} />
   </div>;
 }
@@ -228,7 +267,7 @@ function ScannerEvidencePanel({ workspace, scan }: { workspace: Workspace | null
   return <div className="space-y-6">
     <div className="flex flex-wrap items-center justify-between gap-3 border-y border-zinc-200 bg-zinc-50 px-4 py-3">
       <div>
-        <p className="text-sm font-semibold">Dashboards, app linkage, and ownership</p>
+        <p className="text-sm font-semibold">Dashboards, apps, and ownership</p>
         <p className="mt-0.5 text-xs leading-5 text-zinc-500">Runs the Power BI Admin scanner for this workspace only. Subject to the tenant's hourly scan limits — run it deliberately, not repeatedly.</p>
       </div>
       <Button type="button" variant="outline" size="sm" disabled={!workspace || isRunning} onClick={scan.runScan}>
@@ -243,42 +282,67 @@ function ScannerEvidencePanel({ workspace, scan }: { workspace: Workspace | null
     {!payload
       ? <div className="grid border-y border-zinc-200 md:grid-cols-3">
           <AvailabilityNotice icon={<FileBarChart2 className="size-5" />} title="Dashboards" text="Run a scan above to see this workspace's dashboards." />
-          <AvailabilityNotice icon={<Boxes className="size-5" />} title="App linkage" text="Run a scan above to see which Power BI apps reference this workspace's content." />
-          <AvailabilityNotice icon={<UsersRound className="size-5" />} title="Ownership" text="Run a scan above to see report and dataset creators and last editors." />
+          <AvailabilityNotice icon={<Boxes className="size-5" />} title={LABEL.appsUsingWorkspace} text="Run a scan above to see which Power BI apps include this workspace's content." />
+          <AvailabilityNotice icon={<UsersRound className="size-5" />} title="Ownership" text="Run a scan above to see report and semantic model owners." />
         </div>
       : <ScannerEvidenceResults workspace={payload} exportContext={makeExportContext(workspace)} />}
   </div>;
 }
 
 function ScannerEvidenceResults({ workspace, exportContext }: { workspace: ScannerWorkspace; exportContext: ExportContext }) {
-  const dashboardRows: ExplorerGridRow[] = (workspace.dashboards ?? []).map((dashboard) => ({ id: dashboard.id, name: dashboard.displayName, tiles: dashboard.tiles?.length ?? 0, readOnly: dashboard.isReadOnly ? "Read-only" : "Editable", app: dashboard.appId ?? "--" }));
+  const dashboardRows: ExplorerGridRow[] = (workspace.dashboards ?? []).map((dashboard) => ({
+    id: dashboard.id,
+    dashboardId: dashboard.id,
+    name: dashboard.displayName,
+    tiles: dashboard.tiles?.length ?? 0,
+    readOnly: yesNo(dashboard.isReadOnly),
+    appId: dashboard.appId ?? EXPLORER_VALUE.notInAnApp,
+  }));
   const appIds = Array.from(new Set([...(workspace.reports ?? []).map((report) => report.appId), ...(workspace.dashboards ?? []).map((dashboard) => dashboard.appId)].filter((id): id is string => Boolean(id))));
+  // One column per kind of owner: reports carry who created and last modified them,
+  // semantic models only who configured them.
   const ownershipRows: ExplorerGridRow[] = [
-    ...(workspace.reports ?? []).map((report) => ({ id: `report-${report.id}`, kind: "Report", name: report.name, owner: report.modifiedBy ?? report.createdBy ?? "--" })),
-    ...(workspace.datasets ?? []).map((dataset) => ({ id: `dataset-${dataset.id}`, kind: "Semantic model", name: dataset.name, owner: dataset.configuredBy ?? "--" })),
+    ...(workspace.reports ?? []).map((report) => ({
+      id: `report-${report.id}`,
+      itemId: report.id,
+      itemType: EXPLORER_VALUE.itemTypeReport,
+      name: report.name,
+      lastModifiedBy: report.modifiedBy ?? VALUE.notAvailable,
+      createdBy: report.createdBy ?? VALUE.notAvailable,
+      configuredBy: VALUE.notApplicable,
+    })),
+    ...(workspace.datasets ?? []).map((dataset) => ({
+      id: `dataset-${dataset.id}`,
+      itemId: dataset.id,
+      itemType: EXPLORER_VALUE.itemTypeSemanticModel,
+      name: dataset.name,
+      lastModifiedBy: VALUE.notAvailable,
+      createdBy: VALUE.notAvailable,
+      configuredBy: dataset.configuredBy ?? VALUE.notAvailable,
+    })),
   ];
 
   return <div className="space-y-8">
     <div>
-      <SectionHeading icon={<FileBarChart2 className="size-5" />} title="Dashboards" text="Every dashboard the scanner found in this workspace." />
-      <ExplorerGrid rowData={dashboardRows} columnDefs={[{ field: "name", headerName: "Dashboard", minWidth: 230, flex: 1.4 }, { field: "tiles", headerName: "Tiles", minWidth: 100 }, { field: "readOnly", headerName: "Access", minWidth: 120 }, { field: "app", headerName: "Linked app ID", minWidth: 260, flex: 1 }]} emptyMessage="No dashboards were found in this workspace." exportFileName={`${filePart(workspace.name)}-dashboards`} exportContext={exportContext} />
+      <SectionHeading icon={<FileBarChart2 className="size-5" />} title="Dashboards" text="Every dashboard the metadata scan found in this workspace." />
+      <ExplorerGrid rowData={dashboardRows} columnDefs={[{ field: "name", headerName: COLUMN.dashboardName, minWidth: 230, flex: 1 }, { field: "tiles", headerName: COLUMN.dashboardTileCount, minWidth: 210 }, { field: "readOnly", headerName: COLUMN.readOnly, minWidth: 120 }, { field: "appId", headerName: COLUMN.appId, minWidth: 320, flex: 1 }, exportOnlyColumn<ExplorerGridRow>("dashboardId", COLUMN.dashboardId)]} emptyMessage="No dashboards were found in this workspace." exportFileName={explorerFileName(workspace.name, "dashboards")} exportContext={exportContext} />
     </div>
     <div>
-      <SectionHeading icon={<Boxes className="size-5" />} title="App linkage" text="Apps that reference this workspace's content, by ID. The scanner does not return app display names." />
+      <SectionHeading icon={<Boxes className="size-5" />} title={LABEL.appsUsingWorkspace} text="Power BI apps that include this workspace's reports or dashboards, shown by App ID. The metadata scan does not return app names." />
       {appIds.length
         ? <ul className="mt-3 flex flex-wrap gap-2">{appIds.map((id) => <li key={id} className="break-all border border-zinc-200 bg-zinc-50 px-2.5 py-1 font-mono text-xs text-zinc-700">{id}</li>)}</ul>
-        : <p className="mt-3 text-sm text-zinc-500">No app-linked content was found in this workspace.</p>}
+        : <p className="mt-3 text-sm text-zinc-500">No report or dashboard in this workspace is in an app.</p>}
     </div>
     <div>
-      <SectionHeading icon={<UsersRound className="size-5" />} title="Ownership" text="Reports and semantic models, with their creator, last editor, or configuring identity." />
-      <ExplorerGrid rowData={ownershipRows} columnDefs={[{ field: "kind", headerName: "Type", minWidth: 150 }, { field: "name", headerName: "Name", minWidth: 220, flex: 1 }, { field: "owner", headerName: "Owner", minWidth: 260, flex: 1 }]} emptyMessage="No ownership evidence was found in this workspace." exportFileName={`${filePart(workspace.name)}-ownership`} exportContext={exportContext} />
+      <SectionHeading icon={<UsersRound className="size-5" />} title="Ownership" text="Who last modified and created each report, and who configured each semantic model." />
+      <ExplorerGrid rowData={ownershipRows} columnDefs={[{ field: "itemType", headerName: COLUMN.itemType, minWidth: 150 }, { field: "name", headerName: COLUMN.itemName, minWidth: 220, flex: 1 }, { field: "lastModifiedBy", headerName: COLUMN.lastModifiedBy, minWidth: 200, flex: 1 }, { field: "createdBy", headerName: COLUMN.createdBy, minWidth: 200, flex: 1 }, { field: "configuredBy", headerName: COLUMN.configuredBy, minWidth: 200, flex: 1 }, exportOnlyColumn<ExplorerGridRow>("itemId", COLUMN.itemId)]} emptyMessage="No reports or semantic models were found in this workspace." exportFileName={explorerFileName(workspace.name, "owners")} exportContext={exportContext} />
     </div>
   </div>;
 }
 
 function NameSelector({ id, label, items, selectedId, onChange }: { id: string; label: string; items: Array<{ id: string; name: string }>; selectedId: string; onChange: (id: string) => void }) {
   const selectedItem = items.find((item) => item.id === selectedId) ?? null;
-  return <div className="w-full space-y-1.5 xl:max-w-sm"><label className="text-xs font-semibold text-zinc-600" htmlFor={id}>{label}</label><select id={id} value={selectedId} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"><option value="" disabled>Select a {label.toLowerCase()}</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>{selectedItem && <p className="break-all text-xs text-zinc-500">Selected {label.toLowerCase()} ID: <code className="text-zinc-700">{selectedItem.id}</code></p>}</div>;
+  return <div className="w-full space-y-1.5 xl:max-w-sm"><label className="text-xs font-semibold text-zinc-600" htmlFor={id}>{label}</label><select id={id} value={selectedId} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"><option value="" disabled>Select a {label.toLowerCase()}</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>{selectedItem && <p className="break-all text-xs text-zinc-500">{label} ID: <code className="text-zinc-700">{selectedItem.id}</code></p>}</div>;
 }
 
 function ReportSelector({ reports, selectedReport, onChange }: { reports: Report[]; selectedReport: Report | null; onChange: (id: string) => void }) {

@@ -10,7 +10,9 @@ import { Boxes, CheckCircle2, ClipboardCopy, Copy, Download, FileSpreadsheet, Lo
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
+import { copyText, downloadExportCsv, downloadExportExcel, exportTableToTsv, toExportTable, type ExportColumn } from "~/lib/grid-export";
 import { ApiError, isPermissionDenied, isSessionExpired } from "~/lib/lineage-api";
+import { COLUMN, OBJECT_TYPE_LABELS, VALUE } from "~/lib/naming";
 import { cn } from "~/lib/utils";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -49,15 +51,8 @@ export type SemanticModel = {
 
 export type ExplorerEvidenceWarning = { code: string; message: string };
 
-export const SEMANTIC_OBJECT_KIND_LABELS: Record<string, string> = {
-  table: "Table",
-  calculated_table: "Calculated table",
-  column: "Column",
-  calculated_column: "Calculated column",
-  measure: "Measure",
-  hierarchy: "Hierarchy",
-  hierarchy_level: "Hierarchy level",
-};
+/** Semantic object types in the standard vocabulary (Docs/07-column-naming-standard.md). */
+export const SEMANTIC_OBJECT_KIND_LABELS: Record<string, string> = OBJECT_TYPE_LABELS;
 
 const explorerTheme = themeQuartz.withParams({
   accentColor: "var(--fabric-primary)",
@@ -79,19 +74,21 @@ export function ExplorerGrid({ rowData, columnDefs, onRowClick, emptyMessage, ex
   exportContext: ExportContext;
 }) {
   const [tableCopied, setTableCopied] = useState(false);
+  // Screen and file share headers: hidden (export-only) columns included, context first, IDs last.
+  const exportTable = () => toExportTable(rowData, columnDefs as ExportColumn[], exportContext);
 
   async function copyTable() {
-    await copyText(toTabSeparatedValues(withExportContext(rowData, exportContext)));
+    await copyText(exportTableToTsv(exportTable()));
     setTableCopied(true);
     window.setTimeout(() => setTableCopied(false), 1800);
   }
 
-  return <div className="mt-4 overflow-x-auto border border-zinc-200"><div className="flex min-w-[720px] items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-50 px-3 py-2"><span className="text-xs text-zinc-500">{rowData.length} {rowData.length === 1 ? "row" : "rows"}</span><div className="flex gap-2"><Button type="button" variant="outline" size="sm" title="Copy all table values" disabled={!rowData.length} onClick={() => void copyTable()}>{tableCopied ? <CheckCircle2 className="size-3.5 text-emerald-700" /> : <ClipboardCopy className="size-3.5" />} {tableCopied ? "Copied" : "Copy table"}</Button><Button type="button" variant="outline" size="sm" title="Download CSV" disabled={!rowData.length} onClick={() => downloadCsv(rowData, exportContext, exportFileName)}><Download className="size-3.5" /> CSV</Button><Button type="button" variant="outline" size="sm" title="Download Excel-compatible file" disabled={!rowData.length} onClick={() => downloadExcel(rowData, exportContext, exportFileName)}><FileSpreadsheet className="size-3.5" /> Excel</Button></div></div><div className="h-[350px] min-w-[720px]"><AgGridReact<ExplorerGridRow> theme={explorerTheme} rowData={rowData} columnDefs={columnDefs} defaultColDef={{ sortable: true, resizable: true, minWidth: 110, cellRenderer: CopyableCell }} rowHeight={42} headerHeight={40} suppressCellFocus={false} enableCellTextSelection ensureDomOrder overlayNoRowsTemplate={`<span class="ag-overlay-no-rows-center">${emptyMessage}</span>`} onRowClicked={(event) => event.data && onRowClick?.(event.data)} /></div></div>;
+  return <div className="mt-4 overflow-x-auto border border-zinc-200"><div className="flex min-w-[720px] items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-50 px-3 py-2"><span className="text-xs text-zinc-500">{rowData.length} {rowData.length === 1 ? "row" : "rows"}</span><div className="flex gap-2"><Button type="button" variant="outline" size="sm" title="Copy all table values" disabled={!rowData.length} onClick={() => void copyTable()}>{tableCopied ? <CheckCircle2 className="size-3.5 text-emerald-700" /> : <ClipboardCopy className="size-3.5" />} {tableCopied ? "Copied" : "Copy table"}</Button><Button type="button" variant="outline" size="sm" title="Download CSV" disabled={!rowData.length} onClick={() => downloadExportCsv(exportTable(), exportFileName)}><Download className="size-3.5" /> CSV</Button><Button type="button" variant="outline" size="sm" title="Download Excel-compatible file" disabled={!rowData.length} onClick={() => downloadExportExcel(exportTable(), exportFileName)}><FileSpreadsheet className="size-3.5" /> Excel</Button></div></div><div className="h-[350px] min-w-[720px]"><AgGridReact<ExplorerGridRow> theme={explorerTheme} rowData={rowData} columnDefs={columnDefs} defaultColDef={{ sortable: true, resizable: true, minWidth: 110, cellRenderer: CopyableCell }} rowHeight={42} headerHeight={40} suppressCellFocus={false} enableCellTextSelection ensureDomOrder overlayNoRowsTemplate={`<span class="ag-overlay-no-rows-center">${emptyMessage}</span>`} onRowClicked={(event) => event.data && onRowClick?.(event.data)} /></div></div>;
 }
 
 function CopyableCell({ value }: ICellRendererParams<ExplorerGridRow>) {
   const [copied, setCopied] = useState(false);
-  const text = String(value ?? "--");
+  const text = String(value ?? VALUE.notAvailable);
 
   async function copyValue(event: React.MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
@@ -111,76 +108,13 @@ export function objectKey(tableName: string | null | undefined, objectName: stri
   return `${tableName ?? ""}[${objectName}]`.toLocaleLowerCase();
 }
 
+/** Context columns for an export, in standard names; the export writes the names first and the IDs last. */
 export function makeExportContext(workspace: Workspace | null, report?: Report | null, semanticModel?: { id: string; name: string } | null): ExportContext {
   const context: ExportContext = {};
-  if (workspace) { context.parent_workspace_name = workspace.name; context.parent_workspace_id = workspace.id; }
-  if (report) { context.parent_report_name = report.name; context.parent_report_id = report.id; }
-  if (semanticModel) { context.parent_semantic_model_name = semanticModel.name; context.parent_semantic_model_id = semanticModel.id; }
+  if (workspace) { context[COLUMN.workspaceName] = workspace.name; context[COLUMN.workspaceId] = workspace.id; }
+  if (report) { context[COLUMN.reportName] = report.name; context[COLUMN.reportId] = report.id; }
+  if (semanticModel) { context[COLUMN.semanticModel] = semanticModel.name; context[COLUMN.semanticModelId] = semanticModel.id; }
   return context;
-}
-
-function downloadCsv(rows: ExplorerGridRow[], context: ExportContext, baseName: string) {
-  const data = withExportContext(rows, context);
-  const columns = collectColumns(data);
-  const csv = [columns.join(","), ...data.map((row) => columns.map((column) => csvCell(row[column])).join(","))].join("\r\n");
-  downloadBlob(`﻿${csv}`, "text/csv;charset=utf-8", `${filePart(baseName)}.csv`);
-}
-
-function downloadExcel(rows: ExplorerGridRow[], context: ExportContext, baseName: string) {
-  const data = withExportContext(rows, context);
-  const columns = collectColumns(data);
-  const table = `<table><thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead><tbody>${data.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(String(row[column] ?? ""))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  downloadBlob(`<!doctype html><html><head><meta charset="utf-8"></head><body>${table}</body></html>`, "application/vnd.ms-excel;charset=utf-8", `${filePart(baseName)}.xls`);
-}
-
-function withExportContext(rows: ExplorerGridRow[], context: ExportContext) {
-  return rows.map(({ id: _id, ...row }) => ({ ...context, ...row }));
-}
-
-function collectColumns(rows: Array<Record<string, ExportValue>>) {
-  return Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-}
-
-function toTabSeparatedValues(rows: Array<Record<string, ExportValue>>) {
-  const columns = collectColumns(rows);
-  return [
-    columns.join("\t"),
-    ...rows.map((row) => columns.map((column) => String(row[column] ?? "").replace(/[\t\r\n]+/g, " ")).join("\t")),
-  ].join("\n");
-}
-
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return;
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
-}
-
-function csvCell(value: ExportValue) {
-  return `"${String(value ?? "").replace(/"/g, '""')}"`;
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function downloadBlob(content: string, type: string, fileName: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 export function filePart(value: string | undefined) {

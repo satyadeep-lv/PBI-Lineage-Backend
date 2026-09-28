@@ -2,39 +2,12 @@ export type GridValue = string | number | boolean | null | undefined;
 export type GridRow = { id: string; [key: string]: GridValue };
 export type ExportContext = Record<string, string>;
 
-export function withExportContext(rows: GridRow[], context: ExportContext) {
-  return rows.map(({ id: _id, ...row }) => ({ ...context, ...row }));
-}
-
-export function collectColumns(rows: Array<Record<string, GridValue>>) {
-  return Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-}
-
-export function toTabSeparatedValues(rows: Array<Record<string, GridValue>>) {
-  const columns = collectColumns(rows);
-  return [columns.join("\t"), ...rows.map((row) => columns.map((column) => String(row[column] ?? "").replace(/[\t\r\n]+/g, " ")).join("\t"))].join("\n");
-}
-
 function csvCell(value: GridValue) {
   return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
 
-export function downloadCsv(rows: GridRow[], context: ExportContext, baseName: string) {
-  const data = withExportContext(rows, context);
-  const columns = collectColumns(data);
-  const csv = [columns.join(","), ...data.map((row) => columns.map((column) => csvCell(row[column])).join(","))].join("\r\n");
-  downloadBlob(`${String.fromCharCode(0xfeff)}${csv}`, "text/csv;charset=utf-8", `${filePart(baseName)}.csv`);
-}
-
 function escapeHtml(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-export function downloadExcel(rows: GridRow[], context: ExportContext, baseName: string) {
-  const data = withExportContext(rows, context);
-  const columns = collectColumns(data);
-  const table = `<table><thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead><tbody>${data.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(String(row[column] ?? ""))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  downloadBlob(`<!doctype html><html><head><meta charset="utf-8"></head><body>${table}</body></html>`, "application/vnd.ms-excel;charset=utf-8", `${filePart(baseName)}.xls`);
 }
 
 function downloadBlob(content: string, type: string, fileName: string) {
@@ -65,4 +38,54 @@ export async function copyText(text: string) {
     document.execCommand("copy");
     textarea.remove();
   }
+}
+
+/** A column as the export sees it: its row key and the header shown on screen. */
+export type ExportColumn = { field?: string; headerName?: string };
+export type ExportTable = { headers: string[]; rows: string[][] };
+
+const isIdHeader = (header: string) => header === "ID" || header.endsWith(" ID");
+
+function exportCell(value: GridValue) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+/**
+ * The table Copy table, CSV, and Excel all write: the grid's own headers (hidden
+ * export-only columns included) so screen and file always match, the context
+ * columns (workspace, report, selection …) first, and every "… ID" column last.
+ */
+export function toExportTable(rows: Array<Record<string, GridValue>>, columns: ExportColumn[], context: ExportContext = {}): ExportTable {
+  const gridColumns = columns
+    .filter((column): column is ExportColumn & { field: string } => Boolean(column.field))
+    .map((column) => ({ header: column.headerName ?? column.field, read: (row: Record<string, GridValue>) => row[column.field] }));
+  const gridHeaders = new Set(gridColumns.map((column) => column.header));
+  const contextColumns = Object.entries(context)
+    .filter(([header]) => !gridHeaders.has(header))
+    .map(([header, value]) => ({ header, read: () => value as GridValue }));
+  const ordered = [
+    ...contextColumns.filter((column) => !isIdHeader(column.header)),
+    ...gridColumns.filter((column) => !isIdHeader(column.header)),
+    ...gridColumns.filter((column) => isIdHeader(column.header)),
+    ...contextColumns.filter((column) => isIdHeader(column.header)),
+  ];
+  return { headers: ordered.map((column) => column.header), rows: rows.map((row) => ordered.map((column) => exportCell(column.read(row)))) };
+}
+
+export function exportTableToTsv(table: ExportTable) {
+  const line = (cells: string[]) => cells.map((cell) => cell.replace(/[\t\r\n]+/g, " ")).join("\t");
+  return [line(table.headers), ...table.rows.map(line)].join("\n");
+}
+
+export function downloadExportCsv(table: ExportTable, baseName: string) {
+  const line = (cells: string[]) => cells.map((cell) => csvCell(cell)).join(",");
+  downloadBlob(`${String.fromCharCode(0xfeff)}${[line(table.headers), ...table.rows.map(line)].join("\r\n")}`, "text/csv;charset=utf-8", `${filePart(baseName)}.csv`);
+}
+
+export function downloadExportExcel(table: ExportTable, baseName: string) {
+  const cells = (tag: "th" | "td", values: string[]) => values.map((value) => `<${tag}>${escapeHtml(value)}</${tag}>`).join("");
+  const html = `<table><thead><tr>${cells("th", table.headers)}</tr></thead><tbody>${table.rows.map((row) => `<tr>${cells("td", row)}</tr>`).join("")}</tbody></table>`;
+  downloadBlob(`<!doctype html><html><head><meta charset="utf-8"></head><body>${html}</body></html>`, "application/vnd.ms-excel;charset=utf-8", `${filePart(baseName)}.xls`);
 }
