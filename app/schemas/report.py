@@ -6,6 +6,7 @@ class Report(BaseModel):
     name: str
 
     dataset_id: str | None = None
+    dataset_workspace_id: str | None = None
     description: str | None = None
 
     report_type: str | None = None

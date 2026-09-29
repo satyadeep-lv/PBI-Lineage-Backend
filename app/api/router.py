@@ -2,7 +2,9 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     ai,
+    apps,
     auth,
+    cache,
     explorer,
     gateways,
     health,
@@ -40,6 +42,18 @@ api_router.include_router(
 )
 
 api_router.include_router(
+    apps.router,
+    prefix="/apps",
+    tags=["Apps"],
+)
+
+api_router.include_router(
+    apps.org_app_router,
+    prefix="/workspaces",
+    tags=["Apps"],
+)
+
+api_router.include_router(
     reports.router,
     prefix="/reports",
     tags=["Reports"],
@@ -49,6 +63,12 @@ api_router.include_router(
     gateways.router,
     prefix="/gateways",
     tags=["Gateways"],
+)
+
+api_router.include_router(
+    cache.router,
+    prefix="/cache",
+    tags=["Cache"],
 )
 
 api_router.include_router(

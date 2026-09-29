@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.ai.models.enums import AudienceType
@@ -13,6 +15,11 @@ class ModelRequest(BaseModel):
     max_tokens: int | None = None
     timeout_seconds: float | None = None
 
+    # JSON-Schema tool definitions the model may call, and an optional
+    # nudge to force a tool on the first round.
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    require_tool: bool = False
+
 
 class AIChatContext(BaseModel):
     """Lightweight UI context identifiers.
@@ -27,6 +34,9 @@ class AIChatContext(BaseModel):
     workspace_id: str | None = None
     report_id: str | None = None
     semantic_model_id: str | None = None
+    # A report's model can live in another workspace. Optional: the resolver
+    # finds it itself when this is absent.
+    semantic_model_workspace_id: str | None = None
     page_id: str | None = None
     object_type: str | None = None
     object_id: str | None = None

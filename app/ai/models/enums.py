@@ -11,6 +11,7 @@ class MessageRole(str, Enum):
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
+    TOOL = "tool"
 
 
 class AIAnswerStatus(str, Enum):
@@ -32,6 +33,9 @@ class AIIntent(str, Enum):
     CALCULATED_COLUMN_EXPLANATION = "calculated_column_explanation"
     REPORT_INFORMATION = "report_information"
     SEMANTIC_MODEL_INFORMATION = "semantic_model_information"
+    WORKSPACE_INFORMATION = "workspace_information"
+    # A question about Power AI itself: "what can you do?", "hi", "thanks".
+    CAPABILITIES = "capabilities"
     DATABASE_SOURCE = "database_source"
     UPSTREAM_LINEAGE = "upstream_lineage"
     DOWNSTREAM_LINEAGE = "downstream_lineage"

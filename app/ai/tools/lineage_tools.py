@@ -12,6 +12,18 @@ from app.services.report_semantic_lineage_service import ReportSemanticLineageSe
 
 _DEFAULT_NAVIGATION_DEPTH = 8
 
+_PHYSICAL_NODE_TYPES = frozenset({"physical_source", "snowflake_object"})
+
+
+def _fact_type_for(
+    node_type: str,
+    default: EvidenceFactType,
+) -> EvidenceFactType:
+    if node_type in _PHYSICAL_NODE_TYPES:
+        return "source"
+    return default
+
+
 _NODE_TYPE_BY_RESOLVED_OBJECT_TYPE: dict[str, str] = {
     "measure": "semantic_measure",
     "column": "semantic_column",
@@ -29,23 +41,28 @@ def build_context_graph(context: ResolvedAIContext) -> LineageGraph | None:
     effort: matching failures degrade to a semantic-model-only graph rather
     than failing the whole request.
     """
-    if context.parsed_semantic_model is None:
+    model = context.parsed_semantic_model
+    if model is None:
         return None
 
     report_lineage = None
-    if context.report_definition is not None and context.workspace_id:
+    if context.report_definition is not None:
         try:
             report_lineage = ReportSemanticLineageService().match(
                 report=context.report_definition,
-                semantic_model=context.parsed_semantic_model,
-                semantic_model_workspace_id=context.workspace_id,
+                semantic_model=model,
+                # The model's own workspace, not the report's: the graph
+                # rejects report lineage that names a different model home,
+                # which is exactly the case for a report on a shared model.
+                semantic_model_workspace_id=model.workspace_id,
             )
         except Exception:  # noqa: BLE001 - heuristic matcher, degrade not crash
             report_lineage = None
 
     return build_lineage_graph(
-        context.parsed_semantic_model,
+        model,
         report_lineage=report_lineage,
+        physical_sources=context.physical_sources,
     )
 
 
@@ -106,11 +123,15 @@ def _navigation_evidence(
                 object_type=node.node_type,
                 object_id=node.node_id,
                 object_name=node.name,
-                fact_type=fact_type,
+                # A database table is a different kind of answer from a
+                # measure or column, so it gets its own section rather than
+                # being flattened into one "depends on" list.
+                fact_type=_fact_type_for(node.node_type, fact_type),
                 source_type="lineage_graph",
                 value={
                     "qualified_name": node.qualified_name,
                     "node_type": node.node_type,
+                    **({"properties": node.properties} if node.properties else {}),
                 },
                 workspace_id=context.workspace_id,
                 semantic_model_id=context.semantic_model_id,
@@ -156,7 +177,7 @@ def get_semantic_model_details(context: ResolvedAIContext) -> list[EvidenceItem]
             evidence_id="",
             object_type="semantic_model",
             object_id=model.semantic_model_id,
-            object_name=model.semantic_model_id,
+            object_name="This semantic model",
             fact_type="definition",
             source_type="tmdl",
             value={
@@ -164,6 +185,14 @@ def get_semantic_model_details(context: ResolvedAIContext) -> list[EvidenceItem]
                 "measure_count": measure_count,
                 "column_count": column_count,
                 "table_names": [table.name for table in model.tables],
+                # Names, not just counts: "what measures are there" is a
+                # question the model can answer outright, and returning only
+                # a count made it look unanswerable.
+                "measures_by_table": {
+                    table.name: [measure.name for measure in table.measures]
+                    for table in model.tables
+                    if table.measures
+                },
             },
             workspace_id=model.workspace_id,
             semantic_model_id=model.semantic_model_id,
@@ -180,7 +209,9 @@ def get_physical_sources(context: ResolvedAIContext) -> list[EvidenceItem]:
     if model is None:
         return []
 
-    discovery = PhysicalSourceDiscoveryService().discover(model)
+    discovery = context.physical_sources or PhysicalSourceDiscoveryService().discover(
+        model
+    )
     now = datetime.now(UTC)
 
     return [

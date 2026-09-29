@@ -51,6 +51,14 @@ def analyze_impact(context: ResolvedAIContext) -> list[EvidenceItem]:
                 "qualified_name": impacted.node.qualified_name,
                 "node_type": impacted.node.node_type,
                 "distance": impacted.distance,
+                # Carries the report/page/visual detail for a visual node,
+                # which was previously dropped -- leaving a bare GUID as the
+                # only thing shown for "what breaks if this changes".
+                **(
+                    {"properties": impacted.node.properties}
+                    if impacted.node.properties
+                    else {}
+                ),
             },
             workspace_id=context.workspace_id,
             semantic_model_id=context.semantic_model_id,

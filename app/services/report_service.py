@@ -121,6 +121,7 @@ class ReportService:
             id=report_id,
             name=report_name,
             dataset_id=report.get("datasetId"),
+            dataset_workspace_id=report.get("datasetWorkspaceId"),
             description=report.get("description"),
             report_type=report.get("reportType"),
             format=report.get("format"),

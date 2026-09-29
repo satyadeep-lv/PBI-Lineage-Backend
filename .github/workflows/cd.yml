@@ -56,6 +56,10 @@ jobs:
 
       KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
 
+      # Production feature switches. Missing variables fail closed.
+      ENABLE_API_DOCS: ${{ vars.ENABLE_API_DOCS || 'false' }}
+      AI_ENABLED: ${{ vars.AI_ENABLED || 'false' }}
+
     steps:
       # ------------------------------------------------------
       # Resolve release
@@ -120,6 +124,24 @@ jobs:
               }
 
               Write-Host "$($entry.Key): configured"
+          }
+
+          $featureSwitches = @{
+              ENABLE_API_DOCS = $env:ENABLE_API_DOCS
+              AI_ENABLED = $env:AI_ENABLED
+          }
+
+          foreach ($entry in $featureSwitches.GetEnumerator()) {
+              $value = ([string]$entry.Value).Trim().ToLowerInvariant()
+
+              if ($value -notin @("true", "false")) {
+                  throw (
+                      "Feature switch '$($entry.Key)' must be " +
+                      "exactly 'true' or 'false'."
+                  )
+              }
+
+              Write-Host "$($entry.Key): $value"
           }
 
           Write-Host "Deployment configuration validation passed."
@@ -335,6 +357,8 @@ jobs:
                   "ContainerName=$env:BACKEND_CONTAINER_NAME" `
                   "HostPort=$env:BACKEND_HOST_PORT" `
                   "ContainerPort=$env:BACKEND_CONTAINER_PORT" `
+                  "EnableApiDocs=$env:ENABLE_API_DOCS" `
+                  "AiEnabled=$env:AI_ENABLED" `
               --query "value[].message" `
               --output tsv
 

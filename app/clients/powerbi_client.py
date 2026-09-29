@@ -87,6 +87,7 @@ class PowerBIClient:
                 "$top": top,
                 "$skip": skip,
             },
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -101,6 +102,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_object_response(response)
@@ -115,6 +117,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}/reports"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -129,6 +132,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}/datasets"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -144,6 +148,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}/reports/{report_id}"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_object_response(response)
@@ -159,6 +164,7 @@ class PowerBIClient:
             url=(f"{self.BASE_URL}/reports/{report_id}"),
             access_token=access_token,
             not_found_resource="report",
+            cacheable=True,
         )
 
         return self._parse_object_response(response)
@@ -172,6 +178,7 @@ class PowerBIClient:
             provider="powerbi",
             url=f"{self.BASE_URL}/gateways",
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -188,6 +195,7 @@ class PowerBIClient:
             url=(f"{self.BASE_URL}/gateways/{gateway_id}/datasources/{datasource_id}"),
             access_token=access_token,
             not_found_resource="gateway datasource",
+            cacheable=True,
         )
 
         return self._parse_object_response(response)
@@ -202,6 +210,7 @@ class PowerBIClient:
             provider="powerbi",
             url=f"{self.BASE_URL}/gateways/{gateway_id}/datasources",
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -294,6 +303,7 @@ class PowerBIClient:
             provider="powerbi",
             url=(f"{self.BASE_URL}/groups/{workspace_id}/reports/{report_id}/pages"),
             access_token=access_token,
+            cacheable=True,
         )
 
         return self._parse_list_response(response)
@@ -315,6 +325,230 @@ class PowerBIClient:
                 f"{page_name}"
             ),
             access_token=access_token,
+            cacheable=True,
+        )
+
+        return self._parse_object_response(response)
+
+    # -- Apps -------------------------------------------------------------
+    #
+    # Power BI exposes no API for an app's audiences (see the app access
+    # service). These are the documented reads that describe an app, its
+    # content and who can reach it; the admin ones need a Fabric
+    # administrator or a service principal allowed to call read-only admin
+    # APIs.
+
+    async def get_apps_as_admin(
+        self,
+        *,
+        access_token: str,
+        top: int,
+        skip: int,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/admin/apps",
+            access_token=access_token,
+            params={"$top": top, "$skip": skip},
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_app_users_as_admin(
+        self,
+        *,
+        app_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/admin/apps/{app_id}/users",
+            access_token=access_token,
+            not_found_resource="app",
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_app(
+        self,
+        *,
+        app_id: str,
+        access_token: str,
+    ) -> dict[str, Any]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/apps/{app_id}",
+            access_token=access_token,
+            not_found_resource="app",
+            cacheable=True,
+        )
+
+        return self._parse_object_response(response)
+
+    async def get_app_reports(
+        self,
+        *,
+        app_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/apps/{app_id}/reports",
+            access_token=access_token,
+            not_found_resource="app",
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_app_dashboards(
+        self,
+        *,
+        app_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/apps/{app_id}/dashboards",
+            access_token=access_token,
+            not_found_resource="app",
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_reports_as_admin(
+        self,
+        *,
+        access_token: str,
+        odata_filter: str,
+        top: int,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/admin/reports",
+            access_token=access_token,
+            params={"$filter": odata_filter, "$top": top},
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_dashboards_as_admin(
+        self,
+        *,
+        access_token: str,
+        odata_filter: str,
+        top: int,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/admin/dashboards",
+            access_token=access_token,
+            params={"$filter": odata_filter, "$top": top},
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_report_users_as_admin(
+        self,
+        *,
+        report_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/admin/reports/{report_id}/users",
+            access_token=access_token,
+            not_found_resource="report",
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_dashboard_users_as_admin(
+        self,
+        *,
+        dashboard_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/admin/dashboards/{dashboard_id}/users",
+            access_token=access_token,
+            not_found_resource="dashboard",
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_workspace_users(
+        self,
+        *,
+        workspace_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/groups/{workspace_id}/users",
+            access_token=access_token,
+            not_found_resource="workspace",
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_workspace_users_as_admin(
+        self,
+        *,
+        workspace_id: str,
+        access_token: str,
+    ) -> list[dict[str, Any]]:
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/admin/groups/{workspace_id}/users",
+            access_token=access_token,
+            not_found_resource="workspace",
+            cacheable=True,
+        )
+
+        return self._parse_list_response(response)
+
+    async def get_activity_events(
+        self,
+        *,
+        access_token: str,
+        start_date_time: str,
+        end_date_time: str,
+        activity: str,
+        continuation_token: str | None = None,
+        cacheable: bool = False,
+    ) -> dict[str, Any]:
+        """One page of the tenant activity log.
+
+        Microsoft requires the window to sit inside one UTC day and every
+        value to be wrapped in single quotes; a follow-up page is requested
+        with only the continuation token.
+        """
+        params: dict[str, Any]
+        if continuation_token is None:
+            params = {
+                "startDateTime": f"'{start_date_time}'",
+                "endDateTime": f"'{end_date_time}'",
+                "$filter": f"Activity eq '{activity}'",
+            }
+        else:
+            params = {"continuationToken": f"'{continuation_token}'"}
+
+        response = await provider_get(
+            provider="powerbi",
+            url=f"{self.BASE_URL}/admin/activityevents",
+            access_token=access_token,
+            params=params,
+            cacheable=cacheable,
         )
 
         return self._parse_object_response(response)

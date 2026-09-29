@@ -2,6 +2,8 @@ import logging
 import time
 import uuid
 
+from app.ai.agents.base import assign_evidence_ids
+from app.ai.composition.capabilities import capabilities_answer
 from app.ai.composition.deterministic_renderer import DeterministicAnswerRenderer
 from app.ai.composition.grounded_composer import ComposerFailure, compose
 from app.ai.composition.grounding_validator import (
@@ -10,14 +12,27 @@ from app.ai.composition.grounding_validator import (
 )
 from app.ai.composition.suggested_questions import suggested_questions_for
 from app.ai.context.resolver import AIContextResolver
+from app.ai.models.context import ResolvedAIContext
 from app.ai.models.enums import AIAnswerStatus, AudienceType
 from app.ai.models.evidence import EvidenceBundle, GroundedClaim
 from app.ai.models.requests import AIChatRequest
-from app.ai.models.responses import AIChatResponse, AIStatusResponse, AIUsage
-from app.ai.orchestration.intent import classify_intent
+from app.ai.models.responses import (
+    AIChatResponse,
+    AIFocus,
+    AIStatusResponse,
+    AIToolCall,
+    AIUsage,
+)
+from app.ai.orchestration.intent import (
+    capability_kind,
+    classify_intent,
+    wants_workspace_inventory,
+)
 from app.ai.orchestration.supervisor import Supervisor
+from app.ai.orchestration.tool_loop import ToolLoopUnavailableError, run_tool_loop
 from app.ai.providers.base import ModelGateway
 from app.ai.providers.factory import build_model_gateway, is_provider_configured
+from app.ai.services.conversation_store import conversation_history, remember_turn
 from app.core.config import Settings
 from app.core.exceptions import AIDisabledError
 from app.core.metrics import metrics_registry
@@ -33,9 +48,11 @@ _STATUS_METRIC_BY_ANSWER_STATUS: dict[AIAnswerStatus, str] = {
 class AIService:
     """Orchestrates one request end to end.
 
-    resolver -> supervisor/agent -> evidence gate -> composer -> validator
-    -> deterministic fallback. The model is only ever invoked once, and
-    only when `EvidenceBundle.can_answer` is True.
+    resolver -> tool loop (model picks read-only tools) -> or, failing that,
+    supervisor/agent -> evidence gate -> composer -> validator ->
+    deterministic fallback. The composer is only ever invoked when
+    `EvidenceBundle.can_answer` is True, and a tool-loop answer is only kept
+    when tools actually returned evidence.
     """
 
     def __init__(
@@ -50,6 +67,9 @@ class AIService:
         self._gateway = gateway or build_model_gateway(settings)
         self._powerbi_access_token = powerbi_access_token
         self._fabric_access_token = fabric_access_token
+        # The last request resolved, so the tool loop and the fixed path of
+        # one request share a single resolution instead of fetching twice.
+        self._last_resolution: tuple[AIChatRequest, ResolvedAIContext] | None = None
 
     def status(self) -> AIStatusResponse:
         return AIStatusResponse(
@@ -60,15 +80,68 @@ class AIService:
             configured=is_provider_configured(self._settings),
         )
 
-    async def build_evidence_bundle(
-        self,
-        request: AIChatRequest,
-    ) -> EvidenceBundle:
+    async def _resolved_context(self, request: AIChatRequest) -> ResolvedAIContext:
+        if self._last_resolution is not None and self._last_resolution[0] is request:
+            return self._last_resolution[1]
+
         resolver = AIContextResolver(
             powerbi_access_token=self._powerbi_access_token,
             fabric_access_token=self._fabric_access_token,
         )
-        resolved_context = await resolver.resolve(request.context)
+        resolved = await resolver.resolve(
+            request.context,
+            include_workspace_inventory=wants_workspace_inventory(
+                request.message,
+                request.context,
+            ),
+        )
+        self._last_resolution = (request, resolved)
+        return resolved
+
+    async def _capabilities_response(
+        self,
+        request: AIChatRequest,
+        *,
+        conversation_id: str,
+    ) -> AIChatResponse | None:
+        """Answer "what can you do?", "hi" or "thanks" without any evidence gate.
+
+        These ask about Power AI, not about the estate, so refusing them for
+        lacking lineage evidence was always wrong. The facts the answer does
+        state (what is open, how many reports) come from the same dossiers
+        as every other answer and are returned as its evidence.
+        """
+        kind = capability_kind(request.message)
+        if kind is None:
+            return None
+
+        suggestions = suggested_questions_for(request.context)
+        # "Thanks" says nothing about what is open, so nothing is fetched.
+        resolved = (
+            ResolvedAIContext()
+            if kind == "thanks"
+            else await self._resolved_context(request)
+        )
+        answer, evidence = capabilities_answer(
+            resolved,
+            kind=kind,
+            suggestions=suggestions,
+        )
+        return AIChatResponse(
+            conversation_id=conversation_id,
+            status=AIAnswerStatus.ANSWERED,
+            answer=answer,
+            evidence=assign_evidence_ids(evidence),
+            agent="capabilities",
+            suggested_questions=suggestions,
+            focus=focus_of(resolved),
+        )
+
+    async def build_evidence_bundle(
+        self,
+        request: AIChatRequest,
+    ) -> EvidenceBundle:
+        resolved_context = await self._resolved_context(request)
 
         return Supervisor().handle(
             question=request.message,
@@ -76,7 +149,164 @@ class AIService:
             resolved_context=resolved_context,
         )
 
+    async def _answer_with_tools(
+        self,
+        request: AIChatRequest,
+        resolved_context: ResolvedAIContext,
+        *,
+        conversation_id: str,
+    ) -> AIChatResponse | None:
+        try:
+            result = await run_tool_loop(
+                self._gateway,
+                question=request.message,
+                context=resolved_context,
+                temperature=self._settings.ai_temperature,
+                audience=request.audience,
+                history=conversation_history(
+                    self._powerbi_access_token,
+                    request.conversation_id,
+                ),
+            )
+        except ToolLoopUnavailableError:
+            return None
+        except Exception:
+            logger.warning(
+                "ai_tool_loop_failed",
+                extra={"event": "ai_tool_loop_failed"},
+            )
+            metrics_registry.record_grounding_event("ai_provider_failure_total")
+            return None
+
+        if not result.answer or not result.evidence:
+            # A model answer with no tool evidence behind it is exactly what
+            # this system must not return.
+            return None
+
+        usage = None
+        if result.last_response is not None:
+            usage = AIUsage(
+                provider=result.last_response.provider,
+                model=result.last_response.model,
+                tokens=result.last_response.usage.total_tokens,
+            )
+
+        logger.info(
+            "ai_tool_loop_completed",
+            extra={
+                "event": "ai_tool_loop_completed",
+                "conversation_id": conversation_id,
+                "rounds": result.rounds,
+                "tool_calls": len(result.trace),
+                "evidence_count": len(result.evidence),
+            },
+        )
+        metrics_registry.record_grounding_event("ai_grounded_answers_total")
+
+        return AIChatResponse(
+            conversation_id=conversation_id,
+            status=AIAnswerStatus.ANSWERED,
+            answer=result.answer,
+            claims=[],
+            # Numbered like every other path, so each item has a stable,
+            # unique id the frontend can key and cite.
+            evidence=assign_evidence_ids(result.evidence),
+            agent="tool_loop",
+            suggested_questions=suggested_questions_for(request.context),
+            usage=usage,
+            focus=focus_of(resolved_context),
+            tool_trace=[
+                AIToolCall(
+                    round=record.round,
+                    tool=record.tool,
+                    arguments=record.arguments,
+                    evidence_count=record.evidence_count,
+                    duration_ms=record.duration_ms,
+                    status=record.status,
+                )
+                for record in result.trace
+            ],
+        )
+
+    async def explain(
+        self,
+        request: AIChatRequest,
+    ) -> AIChatResponse:
+        """Answer from gathered evidence; a model only ever writes it up.
+
+        Everything Power AI states about a measure -- its DAX, the semantic
+        model it lives in, what it depends on, the database tables behind it,
+        what is built on it and which visuals it reaches -- is gathered
+        deterministically before any model is involved. When AI is enabled
+        and configured, the model turns that evidence into a readable answer
+        (one call, no tools, claims validated against the evidence);
+        otherwise, or if that fails, the deterministic rendering is the
+        answer. Either way the facts do not depend on `AI_ENABLED`, on a
+        provider being configured, or on the host being able to reach one.
+        """
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+
+        capabilities = await self._capabilities_response(
+            request,
+            conversation_id=conversation_id,
+        )
+        if capabilities is not None:
+            return capabilities
+
+        bundle = await self.build_evidence_bundle(request)
+
+        claims: list[GroundedClaim] = []
+        usage: AIUsage | None = None
+        if (
+            bundle.can_answer
+            and self._settings.ai_enabled
+            and is_provider_configured(self._settings)
+        ):
+            answer, claims, usage, _ = await self._compose_grounded_answer(
+                bundle,
+                audience=request.audience,
+            )
+        else:
+            answer = DeterministicAnswerRenderer.render(bundle, request.audience)
+
+        logger.info(
+            "ai_explain_completed",
+            extra={
+                "event": "ai_explain_completed",
+                "conversation_id": conversation_id,
+                "agent": bundle.agent,
+                "evidence_count": len(bundle.evidence),
+                "evidence_status": bundle.status.value,
+            },
+        )
+
+        return AIChatResponse(
+            conversation_id=conversation_id,
+            status=bundle.status,
+            answer=answer,
+            claims=claims,
+            evidence=bundle.evidence,
+            agent=bundle.agent,
+            suggested_questions=suggested_questions_for(request.context),
+            usage=usage,
+            focus=focus_of(bundle.context),
+        )
+
     async def generate(
+        self,
+        request: AIChatRequest,
+    ) -> AIChatResponse:
+        response = await self._generate(request)
+        # Kept whatever path answered, so a follow-up can refer back to it.
+        remember_turn(
+            self._powerbi_access_token,
+            response.conversation_id,
+            request.message,
+            response.answer,
+        )
+        return response
+
+    async def _generate(
         self,
         request: AIChatRequest,
     ) -> AIChatResponse:
@@ -85,6 +315,28 @@ class AIService:
 
         conversation_id = request.conversation_id or str(uuid.uuid4())
         metrics_registry.record_grounding_event("ai_requests_total")
+
+        capabilities = await self._capabilities_response(
+            request,
+            conversation_id=conversation_id,
+        )
+        if capabilities is not None:
+            return capabilities
+
+        resolved_context = await self._resolved_context(request)
+
+        # Preferred path: let the model choose which read-only tools to run,
+        # instead of guessing one intent from the question's wording. Any
+        # failure here (no provider, no tools for this context, a provider
+        # that cannot be reached) falls through to the fixed routing below,
+        # so the factual answer never depends on the loop succeeding.
+        tool_answer = await self._answer_with_tools(
+            request,
+            resolved_context,
+            conversation_id=conversation_id,
+        )
+        if tool_answer is not None:
+            return tool_answer
 
         bundle = await self.build_evidence_bundle(request)
 
@@ -118,6 +370,7 @@ class AIService:
                 agent=bundle.agent,
                 suggested_questions=suggested_questions_for(request.context),
                 usage=None,
+                focus=focus_of(bundle.context),
             )
 
         answer, claims, usage, fallback_used = await self._compose_grounded_answer(
@@ -153,6 +406,7 @@ class AIService:
             agent=bundle.agent,
             suggested_questions=suggested_questions_for(request.context),
             usage=usage,
+            focus=focus_of(bundle.context),
         )
 
     async def _compose_grounded_answer(
@@ -204,3 +458,21 @@ class AIService:
             None,
             True,
         )
+
+
+def focus_of(context: ResolvedAIContext) -> AIFocus | None:
+    """The verified context an answer used, in the shape the panel reads."""
+    selected = context.resolved_object
+    focus = AIFocus(
+        workspace_id=context.workspace_id,
+        workspace_name=context.workspace_name,
+        report_id=context.report_id,
+        report_name=context.report_name,
+        semantic_model_id=context.semantic_model_id,
+        semantic_model_name=context.semantic_model_name,
+        object_type=selected.object_type if selected else None,
+        object_name=selected.qualified_name if selected else None,
+    )
+    if not any((focus.workspace_id, focus.report_id, focus.semantic_model_id)):
+        return None
+    return focus

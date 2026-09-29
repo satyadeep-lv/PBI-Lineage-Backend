@@ -1,6 +1,7 @@
 import json
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from app.domain.lineage_ids import stable_lineage_id
 from app.schemas.gateway import GatewayDatasource
@@ -11,6 +12,7 @@ from app.schemas.physical_source import (
     PhysicalSourceWarning,
     QuerySourceMapping,
 )
+from app.services.sql_column_parser import split_dotted_identifier
 
 _DATABASE_CONNECTORS = {
     "sql.database": "sqlserver",
@@ -18,7 +20,16 @@ _DATABASE_CONNECTORS = {
     "postgresql.database": "postgresql",
     "mysql.database": "mysql",
     "oracle.database": "oracle",
+    # DirectQuery to a Power BI/AS semantic model: argument 0 is the XMLA
+    # workspace endpoint and argument 1 is the upstream model, so the same
+    # (server, database) shape as the SQL connectors above.
+    "analysisservices.database": "analysis_services",
 }
+# `Snowflake.Databases(server, warehouse, options)` -- the second positional
+# argument names the compute warehouse, not a database. Reading it as the
+# database silently mislabels every Snowflake table whose database is only
+# knowable from the navigation step or the native query.
+_WAREHOUSE_POSITIONAL_CONNECTORS = frozenset({"snowflake.databases"})
 _URL_CONNECTORS = {
     "odata.feed": "odata",
     "web.contents": "web",
@@ -41,10 +52,15 @@ _NAVIGATION_PATTERN = re.compile(
     r"\s*,\s*(?:Item|Name)\s*=\s*\"(?P<object>(?:\"\"|[^\"])*)\"\s*\]",
     re.IGNORECASE,
 )
+_KIND_NAVIGATION_PATTERN = re.compile(
+    r"\[\s*Name\s*=\s*\"(?P<name>(?:\"\"|[^\"])*)\""
+    r"\s*,\s*Kind\s*=\s*\"(?P<kind>Database|Schema|Table|View)\"\s*\]",
+    re.IGNORECASE,
+)
+_SQL_OBJECT_IDENTIFIER = r"\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[A-Za-z_][\w$]*"
 _SQL_OBJECT_PATTERN = re.compile(
-    r"\b(?:from|join)\s+"
-    r"(?:(?:\[(?P<schema_bracket>[^\]]+)\]|(?P<schema>[A-Za-z_][\w$]*))\s*\.\s*)?"
-    r"(?:\[(?P<object_bracket>[^\]]+)\]|(?P<object>[A-Za-z_][\w$]*))",
+    rf"\b(?:from|join)\s+((?:{_SQL_OBJECT_IDENTIFIER})"
+    rf"(?:\s*\.\s*(?:{_SQL_OBJECT_IDENTIFIER})){{0,2}})",
     re.IGNORECASE,
 )
 _SAFE_GATEWAY_KEYS = {
@@ -74,20 +90,54 @@ class PhysicalSourceDiscoveryService:
         sources: dict[str, PhysicalDataSource] = {}
         mappings: list[QuerySourceMapping] = []
         warnings: list[PhysicalSourceWarning] = []
+        shared_expressions = {
+            expression.name.casefold(): (expression.expression or "")
+            for expression in semantic_model.expressions
+            if expression.name
+        }
 
         for table in semantic_model.tables:
+            if not table.partitions and not table.expression:
+                # A table with no partition at all is neither a calculated
+                # table nor an importable one -- without this it would drop
+                # out of every downstream dataset with no trace at all.
+                mappings.append(
+                    QuerySourceMapping(
+                        query_id=stable_lineage_id(
+                            "query",
+                            semantic_model.workspace_id,
+                            semantic_model.semantic_model_id,
+                            table.name,
+                            "",
+                        ),
+                        semantic_table=table.name,
+                        partition_name="",
+                        source_path=table.source_path,
+                        source_ids=[],
+                    )
+                )
+
             for partition in table.partitions:
                 if (partition.source_type or "").casefold() == "calculated":
                     continue
                 expression = partition.expression or ""
-                partition_sources = self._parse_expression(expression)
+                if not expression.strip() and partition.expression_source:
+                    expression = shared_expressions.get(
+                        partition.expression_source.casefold(),
+                        "",
+                    )
+                partition_sources = self._parse_expression(
+                    expression,
+                    entity_name=partition.entity_name,
+                    schema_name=partition.schema_name,
+                )
 
                 if not partition_sources:
                     warnings.append(
                         PhysicalSourceWarning(
                             code="POWER_QUERY_SOURCE_NOT_DETECTED",
                             message=(
-                                "No supported physical source was detected"
+                                "No supported physical source was detected "
                                 "in the partition."
                             ),
                             source_path=partition.source_path,
@@ -135,8 +185,15 @@ class PhysicalSourceDiscoveryService:
             mapping_count=len(mappings),
         )
 
-    def _parse_expression(self, expression: str) -> list[PhysicalDataSource]:
+    def _parse_expression(
+        self,
+        expression: str,
+        *,
+        entity_name: str | None = None,
+        schema_name: str | None = None,
+    ) -> list[PhysicalDataSource]:
         navigation = self._navigation_target(expression)
+        navigated_database = self._navigated_database(expression)
         native_queries = self._native_queries(expression)
         sources: dict[str, PhysicalDataSource] = {}
 
@@ -145,27 +202,44 @@ class PhysicalSourceDiscoveryService:
 
             if normalized_name in _DATABASE_CONNECTORS:
                 server = _string_argument(call.arguments, 0)
-                database = _string_argument(call.arguments, 1)
                 warehouse = _record_string(call.arguments, "Warehouse")
+                if normalized_name in _WAREHOUSE_POSITIONAL_CONNECTORS:
+                    database = None
+                    warehouse = warehouse or _string_argument(call.arguments, 1)
+                else:
+                    database = _string_argument(call.arguments, 1)
                 candidates = native_queries or [None]
 
                 for native_query in candidates:
                     sql_objects = _sql_objects(native_query) if native_query else []
-                    object_candidates = sql_objects or (
-                        [navigation] if navigation else [None]
+                    object_candidates = (
+                        [(db, schema, obj, None) for db, schema, obj in sql_objects]
+                        if sql_objects
+                        else (
+                            [navigation] if navigation else [(None, None, None, None)]
+                        )
                     )
 
                     for object_target in object_candidates:
-                        schema_name = object_target[0] if object_target else None
-                        object_name = object_target[1] if object_target else None
+                        (
+                            sql_database,
+                            target_schema,
+                            object_name,
+                            object_kind,
+                        ) = object_target
+                        # An `entity` partition carries the upstream object
+                        # name beside the connection, not inside the M.
+                        object_name = object_name or entity_name
+                        target_schema = target_schema or schema_name
                         source = self._source(
                             kind="database",
                             provider=_DATABASE_CONNECTORS[normalized_name],
                             connector=call.name,
                             server=server,
-                            database=database,
-                            schema_name=schema_name,
+                            database=(sql_database or database or navigated_database),
+                            schema_name=target_schema,
                             object_name=object_name,
+                            object_kind=object_kind,
                             warehouse=warehouse,
                             native_query=native_query,
                         )
@@ -301,14 +375,44 @@ class PhysicalSourceDiscoveryService:
                 break
 
     @staticmethod
-    def _navigation_target(expression: str) -> tuple[str, str] | None:
+    def _navigation_target(
+        expression: str,
+    ) -> tuple[str | None, str | None, str, Literal["table", "view"] | None] | None:
+        kind_values: dict[str, str] = {}
+        for match in _KIND_NAVIGATION_PATTERN.finditer(expression):
+            kind_values.setdefault(
+                match.group("kind").casefold(),
+                match.group("name").replace('""', '"'),
+            )
+
+        for kind in ("table", "view"):
+            object_name = kind_values.get(kind)
+            if object_name:
+                return (
+                    kind_values.get("database"),
+                    kind_values.get("schema"),
+                    object_name,
+                    kind,
+                )
+
         match = _NAVIGATION_PATTERN.search(expression)
         if not match:
             return None
         return (
+            None,
             match.group("schema").replace('""', '"'),
             match.group("object").replace('""', '"'),
+            None,
         )
+
+    @staticmethod
+    def _navigated_database(expression: str) -> str | None:
+        # The database can be navigated to even when the object itself comes
+        # from a native query rather than a `Kind="Table"` step.
+        for match in _KIND_NAVIGATION_PATTERN.finditer(expression):
+            if match.group("kind").casefold() == "database":
+                return match.group("name").replace('""', '"')
+        return None
 
     @staticmethod
     def _native_queries(expression: str) -> list[str]:
@@ -336,6 +440,7 @@ class PhysicalSourceDiscoveryService:
         database: str | None = None,
         schema_name: str | None = None,
         object_name: str | None = None,
+        object_kind: Literal["table", "view"] | None = None,
         path: str | None = None,
         url: str | None = None,
         account: str | None = None,
@@ -367,6 +472,7 @@ class PhysicalSourceDiscoveryService:
             database=database,
             schema_name=schema_name,
             object_name=object_name,
+            object_kind=object_kind,
             path=path,
             url=url,
             account=account,
@@ -558,14 +664,38 @@ def _record_string(arguments: list[str], key: str) -> str | None:
     return None
 
 
-def _sql_objects(query: str) -> list[tuple[str | None, str]]:
-    objects: list[tuple[str | None, str]] = []
+def _sql_objects(query: str) -> list[tuple[str | None, str | None, str]]:
+    """Extract (database, schema, object) triples referenced by ``FROM``/
+    ``JOIN`` in a native SQL query. Supports quoted/bracketed/backtick
+    identifiers and up to three dotted parts; a bare or two-part reference
+    leaves the missing leading part(s) as ``None``.
+    """
+    objects: list[tuple[str | None, str | None, str]] = []
+    seen: set[tuple[str | None, str | None, str]] = set()
+
     for match in _SQL_OBJECT_PATTERN.finditer(query):
-        schema_name = match.group("schema_bracket") or match.group("schema")
-        object_name = match.group("object_bracket") or match.group("object")
-        target = (schema_name, object_name)
-        if target not in objects:
+        raw_identifier = match.group(1)
+        if raw_identifier.strip().startswith("("):
+            continue
+
+        parts = split_dotted_identifier(raw_identifier)
+        if not parts:
+            continue
+
+        database: str | None = None
+        schema_name: str | None = None
+        object_name = parts[-1]
+
+        if len(parts) == 3:
+            database, schema_name, object_name = parts[-3], parts[-2], parts[-1]
+        elif len(parts) == 2:
+            schema_name, object_name = parts[-2], parts[-1]
+
+        target = (database, schema_name, object_name)
+        if target not in seen:
+            seen.add(target)
             objects.append(target)
+
     return objects
 
 

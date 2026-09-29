@@ -6,7 +6,7 @@ import msal
 
 from app.clients.fabric_client import FabricClient
 from app.clients.powerbi_client import PowerBIClient
-from app.core.exceptions import AppException
+from app.core.exceptions import AppException, ProviderAuthenticationFailedError
 from app.core.microsoft_auth import (
     FABRIC_SCOPES,
     MICROSOFT_LOGIN_BASE_URL,
@@ -255,17 +255,19 @@ class MicrosoftDeviceAuthService:
     ) -> tuple[str, dict]:
         authority = f"{MICROSOFT_LOGIN_BASE_URL}/{tenant_id}"
 
-        app = msal.PublicClientApplication(
-            client_id=client_id,
-            authority=authority,
-        )
+        try:
+            app = msal.PublicClientApplication(
+                client_id=client_id,
+                authority=authority,
+            )
+            flow = app.initiate_device_flow(
+                scopes=POWERBI_SCOPES,
+            )
+        except Exception as exc:  # noqa: BLE001 - sanitize the MSAL boundary
+            raise ProviderAuthenticationFailedError("powerbi") from exc
 
-        flow = app.initiate_device_flow(
-            scopes=POWERBI_SCOPES,
-        )
-
-        if "user_code" not in flow:
-            raise RuntimeError("Microsoft device authentication could not be started.")
+        if not isinstance(flow, dict) or "user_code" not in flow:
+            raise ProviderAuthenticationFailedError("powerbi")
 
         session_id = str(uuid4())
 
@@ -298,17 +300,19 @@ class MicrosoftDeviceAuthService:
 
         authority = f"{MICROSOFT_LOGIN_BASE_URL}/{session.tenant_id}"
 
-        app = msal.PublicClientApplication(
-            client_id=session.client_id,
-            authority=authority,
-        )
+        try:
+            app = msal.PublicClientApplication(
+                client_id=session.client_id,
+                authority=authority,
+            )
+            flow = app.initiate_device_flow(
+                scopes=FABRIC_SCOPES,
+            )
+        except Exception as exc:  # noqa: BLE001 - sanitize the MSAL boundary
+            raise ProviderAuthenticationFailedError("fabric") from exc
 
-        flow = app.initiate_device_flow(
-            scopes=FABRIC_SCOPES,
-        )
-
-        if "user_code" not in flow:
-            raise RuntimeError("Fabric authentication could not be started.")
+        if not isinstance(flow, dict) or "user_code" not in flow:
+            raise ProviderAuthenticationFailedError("fabric")
 
         session.fabric_flow = flow
 

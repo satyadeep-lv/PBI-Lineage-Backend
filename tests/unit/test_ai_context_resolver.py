@@ -145,6 +145,11 @@ async def test_resolve_valid_report_fetches_definition(monkeypatch):
     ):
         return sample_report_definition()
 
+    async def fake_get_parsed_definition(
+        self, *, workspace_id, semantic_model_id, access_token, definition_format="TMDL"
+    ):
+        return sample_semantic_model()
+
     monkeypatch.setattr(WorkspaceService, "get_workspace", fake_get_workspace)
     monkeypatch.setattr(ReportService, "get_report", fake_get_report)
     monkeypatch.setattr(
@@ -152,14 +157,24 @@ async def test_resolve_valid_report_fetches_definition(monkeypatch):
         "get_normalized_definition",
         fake_get_normalized_definition,
     )
+    monkeypatch.setattr(
+        SemanticModelDefinitionService,
+        "get_parsed_definition",
+        fake_get_parsed_definition,
+    )
 
     resolved = await _resolver().resolve(
         AIChatContext(workspace_id=WORKSPACE_ID, report_id=REPORT_ID)
     )
 
     assert resolved.report_id == REPORT_ID
+    assert resolved.report_name == "Sales Report"
     assert resolved.report_definition is not None
     assert resolved.report_definition.report_id == REPORT_ID
+    # No semantic_model_id was sent: the report's own binding names it, so
+    # "explain this report" can still reach the measures and sources behind it.
+    assert resolved.semantic_model_id == SEMANTIC_MODEL_ID
+    assert resolved.parsed_semantic_model is not None
 
 
 @pytest.mark.asyncio

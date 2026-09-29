@@ -229,6 +229,13 @@ class _SemanticModelIndex:
         table_name = reference.table_name
         object_name = reference.object_name
 
+        if reference.object_type == "visual_calculation":
+            # Defined in the report, not the model: there is nothing to match.
+            return self._unmatched_result(
+                reference,
+                "visual_calculation",
+            )
+
         if not table_name:
             return self._unmatched_result(
                 reference,
@@ -581,6 +588,8 @@ class _SemanticModelIndex:
                     table_name=table.name,
                     object_name=column.name,
                     source_path=(column.source_path or table.source_path),
+                    lineage_tag=column.lineage_tag,
+                    source_lineage_tag=column.source_lineage_tag,
                 )
 
                 index[

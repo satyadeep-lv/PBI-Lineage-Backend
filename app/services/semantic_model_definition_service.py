@@ -23,6 +23,7 @@ from app.schemas.semantic_model_definition import (
     SemanticModelDefinitionPart,
     SemanticModelDefinitionResponse,
 )
+from app.services.provider_read_cache import get_provider_read_cache
 from app.services.semantic_model_definition_parser import (
     SemanticModelDefinitionParser,
 )
@@ -269,6 +270,34 @@ class SemanticModelDefinitionService:
         semantic_model_id: str,
         access_token: str,
         definition_format: str = "TMDL",
+    ) -> SemanticModelDefinitionResponse:
+        cache = get_provider_read_cache()
+        key = (
+            cache.fingerprint(access_token),
+            "fabric",
+            "semantic-model-definition",
+            workspace_id,
+            semantic_model_id,
+            definition_format,
+        )
+
+        return await cache.get_or_fetch(
+            key,
+            lambda: self._fetch_definition(
+                workspace_id=workspace_id,
+                semantic_model_id=semantic_model_id,
+                access_token=access_token,
+                definition_format=definition_format,
+            ),
+        )
+
+    async def _fetch_definition(
+        self,
+        *,
+        workspace_id: str,
+        semantic_model_id: str,
+        access_token: str,
+        definition_format: str,
     ) -> SemanticModelDefinitionResponse:
         response = await self.client.start_semantic_model_definition(
             workspace_id=workspace_id,

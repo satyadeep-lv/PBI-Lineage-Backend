@@ -7,6 +7,11 @@ from app.schemas.workspace import (
     WorkspaceListResponse,
 )
 
+# Power BI provisions these workspaces itself and their semantic models are
+# not readable through the Fabric definition APIs, so every lineage call
+# against them fails upstream. They are noise in a lineage picker.
+SYSTEM_WORKSPACE_TYPES = frozenset({"admininsights"})
+
 
 class WorkspaceService:
     def __init__(self) -> None:
@@ -25,7 +30,11 @@ class WorkspaceService:
             skip=skip,
         )
 
-        workspaces = [self._map_workspace(item) for item in raw_workspaces]
+        workspaces = [
+            workspace
+            for workspace in (self._map_workspace(item) for item in raw_workspaces)
+            if not self.is_system_workspace(workspace)
+        ]
 
         return WorkspaceListResponse(
             workspaces=workspaces,
@@ -48,6 +57,10 @@ class WorkspaceService:
         return self._map_workspace(raw_workspace)
 
     @staticmethod
+    def is_system_workspace(workspace: Workspace) -> bool:
+        return (workspace.type or "").casefold() in SYSTEM_WORKSPACE_TYPES
+
+    @staticmethod
     def _map_workspace(
         workspace: dict[str, Any],
     ) -> Workspace:
@@ -63,6 +76,7 @@ class WorkspaceService:
         return Workspace(
             id=workspace_id,
             name=workspace_name,
+            type=workspace.get("type"),
             is_read_only=bool(
                 workspace.get(
                     "isReadOnly",

@@ -19,6 +19,7 @@ _UNQUALIFIED_REFERENCE = re.compile(
     r"(?<![A-Za-z0-9_'\]])\[(?P<object>(?:[^\]]|\]\])+)\]"
 )
 _QUOTED_TABLE = re.compile(r"'(?P<table>(?:[^']|'')+)'(?!\s*\[)")
+_BRACKETED_IDENTIFIER = re.compile(r"\[(?:[^\]]|\]\])*\]")
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,13 @@ class DaxDependencyService:
         table_names: list[str],
     ) -> list[tuple[str, str]]:
         cleaned = _strip_dax_comments_and_strings(expression)
+        # A bare table name is never inside `[...]`: without this, `[Net
+        # Sales]` read as a reference to a table called `Sales`. The brackets
+        # themselves stay, so `Sales[Amount]` is still seen as qualified.
+        cleaned = _BRACKETED_IDENTIFIER.sub(
+            lambda match: "[" + " " * (len(match.group(0)) - 2) + "]",
+            cleaned,
+        )
         references: list[tuple[str, str]] = []
         seen: set[str] = set()
 

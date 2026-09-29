@@ -45,6 +45,16 @@ class EvidenceItem(BaseModel):
 
     value: Any
 
+    # A deterministic, plain-language restatement of `value`. Present for
+    # definitions; never model-generated, so it cannot disappear when no AI
+    # provider is configured or reachable.
+    plain_language: str | None = None
+
+    # One readable line saying what this fact is ("Snowflake view
+    # DB.SCHEMA.V_SALES feeds semantic table Sales"). Derived from `value`,
+    # never model-generated; the frontend shows it beside `object_name`.
+    display_value: str | None = None
+
     workspace_id: str | None = None
     report_id: str | None = None
     semantic_model_id: str | None = None

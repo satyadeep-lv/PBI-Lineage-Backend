@@ -91,6 +91,16 @@ def get_report_visuals(context: ResolvedAIContext) -> list[EvidenceItem]:
                 }
                 for reference in visual.field_references
             ]
+            fields = sorted(
+                {
+                    f"{reference.table_name}[{reference.object_name}]"
+                    if reference.table_name
+                    else str(reference.object_name)
+                    for reference in visual.field_references
+                    if reference.object_name
+                }
+            )
+            label = visual.title or f"untitled {visual.visual_type or ''} visual"
             items.append(
                 EvidenceItem(
                     evidence_id="",
@@ -104,6 +114,16 @@ def get_report_visuals(context: ResolvedAIContext) -> list[EvidenceItem]:
                         "page": page.name,
                         "fields": field_summaries,
                     },
+                    display_value=(
+                        f"'{label}'"
+                        + (f" ({visual.visual_type})" if visual.visual_type else "")
+                        + f" on page '{page.display_name}'"
+                        + (
+                            f" uses {', '.join(fields)}"
+                            if fields
+                            else " uses no fields"
+                        )
+                    ),
                     workspace_id=report.workspace_id,
                     report_id=report.report_id,
                     verification_status=VerificationStatus.VERIFIED,
