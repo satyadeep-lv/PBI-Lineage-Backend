@@ -46,6 +46,30 @@ _MAX_VISUALS = 60
 _MAX_VISUALS_PER_PAGE = 25
 _MAX_MODEL_MEASURES = 80
 _MAX_LISTED_COLUMNS = 12
+_MAX_WORKSPACE_LISTED = 100
+
+# Fabric item types as a reader would say them; unknown types are shown as is.
+_ITEM_TYPE_LABELS = {
+    "Dashboard": "dashboard",
+    "Dataflow": "dataflow",
+    "DataPipeline": "data pipeline",
+    "Datamart": "datamart",
+    "Environment": "environment",
+    "Eventhouse": "eventhouse",
+    "Eventstream": "eventstream",
+    "KQLDatabase": "KQL database",
+    "KQLQueryset": "KQL queryset",
+    "Lakehouse": "lakehouse",
+    "MirroredDatabase": "mirrored database",
+    "MLExperiment": "ML experiment",
+    "MLModel": "ML model",
+    "Notebook": "notebook",
+    "OrgApp": "org app",
+    "OrgAppAudience": "org app audience",
+    "SparkJobDefinition": "Spark job definition",
+    "SQLEndpoint": "SQL analytics endpoint",
+    "Warehouse": "warehouse",
+}
 
 _PROVIDER_LABELS = {
     "snowflake": "Snowflake",
@@ -348,6 +372,148 @@ def model_dossier(context: ResolvedAIContext) -> list[EvidenceItem]:
         )
 
     for note in context.coverage_notes:
+        builder.coverage(note)
+
+    return builder.items
+
+
+def workspace_dossier(context: ResolvedAIContext) -> list[EvidenceItem]:
+    """The workspace in view: its reports, semantic models and other items."""
+    inventory = context.workspace_inventory
+    if inventory is None:
+        return []
+
+    builder = _EvidenceBuilder(context)
+    name = context.workspace_name or context.workspace_id or "This workspace"
+    reports = sorted(inventory.reports or [], key=lambda item: item.name.casefold())
+    models = sorted(
+        inventory.semantic_models or [],
+        key=lambda item: item.name.casefold(),
+    )
+    others = inventory.other_items or []
+    models_by_id = {model.id.casefold(): model for model in models}
+    paginated = sum(1 for report in reports if report.report_type == "PaginatedReport")
+
+    other_counts: dict[str, int] = defaultdict(int)
+    for item in others:
+        other_counts[item.item_type] += 1
+
+    parts: list[str] = []
+    if inventory.reports is not None:
+        parts.append(
+            _count(len(reports), "report")
+            + (f" ({paginated} paginated)" if paginated else "")
+        )
+    if inventory.semantic_models is not None:
+        parts.append(_count(len(models), "semantic model"))
+    parts.extend(
+        _count(count, _item_type_label(item_type))
+        for item_type, count in sorted(other_counts.items())
+    )
+    summary = (
+        f"Workspace '{name}' has " + _joined(parts) + "."
+        if parts
+        else f"The contents of workspace '{name}' could not be listed."
+    )
+    builder.add(
+        fact_type="definition",
+        object_type="workspace",
+        object_name=name,
+        object_id=context.workspace_id,
+        value={
+            "workspace": name,
+            "report_count": len(reports) if inventory.reports is not None else None,
+            "paginated_report_count": paginated,
+            "semantic_model_count": (
+                len(models) if inventory.semantic_models is not None else None
+            ),
+            "report_names": [report.name for report in reports],
+            "semantic_model_names": [model.name for model in models],
+            "other_item_counts": dict(other_counts),
+        },
+        display_value=summary,
+        source_type="other",
+        source_reference=f"workspace:{context.workspace_id}",
+    )
+
+    for report in reports[:_MAX_WORKSPACE_LISTED]:
+        model = models_by_id.get((report.semantic_model_id or "").casefold())
+        kind = "paginated report" if report.report_type == "PaginatedReport" else ""
+        if model is not None:
+            binding = f"uses semantic model '{model.name}'"
+        elif report.semantic_model_id:
+            binding = "uses a semantic model from another workspace"
+        else:
+            binding = ""
+        builder.add(
+            fact_type="usage",
+            object_type="workspace_report",
+            object_name=report.name,
+            object_id=report.id,
+            value={
+                "report": report.name,
+                "report_type": report.report_type,
+                "semantic_model": model.name if model else report.semantic_model_id,
+            },
+            display_value=(
+                f"'{report.name}'"
+                + (f" ({kind})" if kind else "")
+                + (f" {binding}" if binding else "")
+            ),
+            source_type="other",
+            source_reference=f"report:{report.id}",
+            report_id=report.id,
+        )
+
+    for model in models[:_MAX_WORKSPACE_LISTED]:
+        users = [
+            report.name
+            for report in reports
+            if (report.semantic_model_id or "").casefold() == model.id.casefold()
+        ]
+        builder.add(
+            fact_type="relationship",
+            object_type="workspace_semantic_model",
+            object_name=model.name,
+            object_id=model.id,
+            value={"semantic_model": model.name, "reports": users},
+            display_value=(
+                f"'{model.name}' is used by {_count(len(users), 'report')} in this "
+                f"workspace: {', '.join(users)}"
+                if users
+                else f"'{model.name}' is not used by any report in this workspace"
+            ),
+            source_type="other",
+            source_reference=f"semantic_model:{model.id}",
+        )
+
+    for item_type in sorted(other_counts):
+        names = sorted(
+            (item.name for item in others if item.item_type == item_type),
+            key=str.casefold,
+        )
+        shown = names[:_MAX_WORKSPACE_LISTED]
+        builder.add(
+            fact_type="relationship",
+            object_type="workspace_item",
+            object_name=item_type,
+            value={"item_type": item_type, "names": shown},
+            display_value=(
+                f"{_count(len(names), _item_type_label(item_type))}: "
+                + ", ".join(shown)
+                + (" ..." if len(names) > len(shown) else "")
+            ),
+            source_type="other",
+            source_reference=f"workspace:{context.workspace_id}",
+        )
+
+    for listed, noun in ((reports, "reports"), (models, "semantic models")):
+        if len(listed) > _MAX_WORKSPACE_LISTED:
+            builder.coverage(
+                f"The workspace has {len(listed)} {noun}; the first "
+                f"{_MAX_WORKSPACE_LISTED} are listed by name."
+            )
+    for note in inventory.notes:
         builder.coverage(note)
 
     return builder.items
@@ -1349,6 +1515,17 @@ def _shorten(expression: str | None) -> str:
 
 def _count(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _joined(parts: list[str]) -> str:
+    """'a', 'a and b', 'a, b and c'."""
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + f" and {parts[-1]}"
+
+
+def _item_type_label(item_type: str) -> str:
+    return _ITEM_TYPE_LABELS.get(item_type, item_type)
 
 
 def _key(table_name: str, object_name: str) -> str:

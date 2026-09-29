@@ -83,6 +83,13 @@ def model_overview(
     return dossier_tools.model_dossier(context)
 
 
+def workspace_overview(
+    context: ResolvedAIContext,
+    arguments: Mapping[str, Any],
+) -> list[EvidenceItem]:
+    return dossier_tools.workspace_dossier(context)
+
+
 def physical_sources(
     context: ResolvedAIContext,
     arguments: Mapping[str, Any],

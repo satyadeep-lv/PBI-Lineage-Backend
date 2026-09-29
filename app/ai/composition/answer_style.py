@@ -45,6 +45,19 @@ def context_brief(context: ResolvedAIContext) -> str:
     if context.workspace_name or context.workspace_id:
         lines.append(f"Workspace: {context.workspace_name or context.workspace_id}")
 
+    inventory = context.workspace_inventory
+    if inventory is not None:
+        counts = [
+            f"{len(listed)} {noun}"
+            for listed, noun in (
+                (inventory.reports, "reports"),
+                (inventory.semantic_models, "semantic models"),
+            )
+            if listed is not None
+        ]
+        if counts:
+            lines.append("The workspace contains " + " and ".join(counts) + ".")
+
     if context.report_id:
         report = context.report_name or context.report_id
         detail = ""

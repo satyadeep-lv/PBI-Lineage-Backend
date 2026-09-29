@@ -1307,9 +1307,28 @@ rejected identically to a nonexistent one. The response is:
   "agent": "tool_loop",
   "suggested_questions": ["..."],
   "tool_trace": [{"round": 1, "tool": "explain_object", "arguments": {"object_name": "Total Revenue"}, "evidence_count": 8, "duration_ms": 3, "status": "completed"}],
-  "usage": {"provider": "...", "model": "...", "tokens": 0}
+  "usage": {"provider": "...", "model": "...", "tokens": 0},
+  "focus": {"source": "page", "workspace_name": "POC", "report_name": null, "semantic_model_name": null, "object_type": null, "object_name": null}
 }
 ```
+
+`focus` is the context the backend actually verified (workspace, report,
+semantic model and selected object, by name). The panel's context chip shows
+it instead of its own page state, so a report or model that could not be read
+is visibly missing. The stream's `metadata` event carries the same `focus`.
+
+**Workspace-level questions.** With only a workspace selected, questions
+such as "how many reports do we have in this workspace" are answered from the
+workspace's own listings: its reports (and which are paginated), semantic
+models, which model each report uses, and other Fabric items (dashboards,
+lakehouses, ...) when a Fabric session exists. The listings are only fetched
+when the question needs them (a workspace-only view, or a question about the
+workspace), and the model is offered a `workspace_overview` tool for them.
+Questions about Power AI itself -- "What can Power AI help me with here?",
+"hi", "thanks" -- get a deterministic answer tailored to what is open, with
+suggested follow-ups, instead of an evidence refusal. `suggested_questions`
+is populated for every context, and every suggestion is one the router can
+answer for that context.
 
 Evidence for a measure or calculated column carries a `plain_language`
 line — a deterministic, structural reading of the DAX

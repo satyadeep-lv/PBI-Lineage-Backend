@@ -40,11 +40,12 @@ def test_inventory_questions_route_to_the_model_agent(question):
     "question",
     [
         "Explain what I'm looking at",
-        "What can Power AI help me with here?",
         "give me an overview",
     ],
 )
 def test_orientation_questions_route_to_the_model_agent(question):
+    # "What can Power AI help me with here?" is about Power AI itself and is
+    # answered by the capabilities path (see test_ai_workspace_questions).
     assert classify_intent(question, None) == AIIntent.SEMANTIC_MODEL_INFORMATION
 
 

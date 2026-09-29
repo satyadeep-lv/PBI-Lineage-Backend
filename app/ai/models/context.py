@@ -43,6 +43,39 @@ class ResolvedReport(BaseModel):
     definition: NormalizedReportDefinitionResponse
 
 
+class WorkspaceInventoryReport(BaseModel):
+    id: str
+    name: str
+    report_type: str | None = None
+    semantic_model_id: str | None = None
+
+
+class WorkspaceInventorySemanticModel(BaseModel):
+    id: str
+    name: str
+
+
+class WorkspaceInventoryItem(BaseModel):
+    """A Fabric item that is neither a report nor a semantic model."""
+
+    id: str
+    name: str
+    item_type: str
+
+
+class WorkspaceInventory(BaseModel):
+    """What the workspace in view contains, as the caller can see it.
+
+    A list is None when it could not be read, so "no reports" and "could not
+    check" never look the same; `notes` says what could not be listed.
+    """
+
+    reports: list[WorkspaceInventoryReport] | None = None
+    semantic_models: list[WorkspaceInventorySemanticModel] | None = None
+    other_items: list[WorkspaceInventoryItem] | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
 class ResolvedAIContext(BaseModel):
     """Authenticated, access-checked context for one AI request.
 
@@ -54,6 +87,9 @@ class ResolvedAIContext(BaseModel):
 
     workspace_id: str | None = None
     workspace_name: str | None = None
+    # Reports, semantic models and other items in the workspace. Only loaded
+    # when the question is about the workspace or nothing narrower is open.
+    workspace_inventory: WorkspaceInventory | None = None
     report_id: str | None = None
     report_name: str | None = None
     semantic_model_id: str | None = None

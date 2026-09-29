@@ -23,6 +23,10 @@ _UNHELPFUL_ID_TYPES = frozenset(
         "semantic_table",
         "relationship",
         "search_result",
+        "workspace",
+        "workspace_report",
+        "workspace_semantic_model",
+        "workspace_item",
     }
 )
 

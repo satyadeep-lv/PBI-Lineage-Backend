@@ -1,8 +1,17 @@
 import asyncio
 
 from app.ai.context.semantic_objects import find_semantic_object
-from app.ai.models.context import ResolvedAIContext, ResolvedObject, ResolvedReport
+from app.ai.models.context import (
+    ResolvedAIContext,
+    ResolvedObject,
+    ResolvedReport,
+    WorkspaceInventory,
+    WorkspaceInventoryItem,
+    WorkspaceInventoryReport,
+    WorkspaceInventorySemanticModel,
+)
 from app.ai.models.requests import AIChatContext
+from app.clients.fabric_client import FabricClient
 from app.core.exceptions import AppException
 from app.domain.semantic_model_filters import exclude_auto_date_tables
 from app.schemas.lineage_graph import (
@@ -14,6 +23,7 @@ from app.schemas.parsed_semantic_model import ParsedSemanticModelResponse
 from app.schemas.physical_source import PhysicalSourceDiscoveryResponse
 from app.schemas.report import Report
 from app.schemas.report_semantic_lineage import ReportSemanticLineageResponse
+from app.services.app_access_common import collect_pages
 from app.services.cross_workspace_source_resolver import CrossWorkspaceSourceResolver
 from app.services.lineage_graph_service import LineageGraphService
 from app.services.lineage_search_service import LineageSearchService
@@ -53,6 +63,10 @@ _MAX_RELATED_REPORTS = 8
 _WORKSPACE_PAGE_SIZE = 5000
 _LOOKUP_CONCURRENCY = 8
 _ENRICHMENT_TIMEOUT_SECONDS = 25.0
+
+# Listed from the Power BI APIs (which carry each report's semantic model), so
+# Fabric's own entries for them are not repeated as "other items".
+_POWERBI_LISTED_ITEM_TYPES = frozenset({"Report", "PaginatedReport", "SemanticModel"})
 
 
 def build_lineage_graph(
@@ -104,6 +118,8 @@ class AIContextResolver:
     async def resolve(
         self,
         context: AIChatContext | None,
+        *,
+        include_workspace_inventory: bool = False,
     ) -> ResolvedAIContext:
         resolved = ResolvedAIContext()
 
@@ -152,6 +168,11 @@ class AIContextResolver:
                     "was left out."
                 )
 
+        if include_workspace_inventory and resolved.workspace_id:
+            resolved.workspace_inventory = await self._workspace_inventory(
+                resolved.workspace_id
+            )
+
         return resolved
 
     @staticmethod
@@ -194,6 +215,88 @@ class AIContextResolver:
 
         resolved.workspace_id = workspace_id
         resolved.workspace_name = workspace.name
+
+    async def _workspace_inventory(self, workspace_id: str) -> WorkspaceInventory:
+        """The workspace's reports, semantic models and other items.
+
+        Every listing is a session-cached provider read with the caller's own
+        token, and each degrades to a note on its own: a workspace whose
+        Fabric items cannot be listed still answers "how many reports".
+        """
+        inventory = WorkspaceInventory()
+        token = self._powerbi_access_token or ""
+
+        reports, models = await asyncio.gather(
+            ReportService().list_reports(workspace_id=workspace_id, access_token=token),
+            SemanticModelService().list_semantic_models(
+                workspace_id=workspace_id,
+                access_token=token,
+            ),
+            return_exceptions=True,
+        )
+
+        if isinstance(reports, AppException):
+            inventory.notes.append("The workspace's reports could not be listed.")
+        elif isinstance(reports, BaseException):
+            raise reports
+        else:
+            inventory.reports = [
+                WorkspaceInventoryReport(
+                    id=report.id,
+                    name=report.name,
+                    report_type=report.report_type,
+                    semantic_model_id=report.dataset_id,
+                )
+                for report in reports.reports
+            ]
+
+        if isinstance(models, AppException):
+            inventory.notes.append(
+                "The workspace's semantic models could not be listed."
+            )
+        elif isinstance(models, BaseException):
+            raise models
+        else:
+            inventory.semantic_models = [
+                WorkspaceInventorySemanticModel(id=model.id, name=model.name)
+                for model in models.semantic_models
+            ]
+
+        if not self._fabric_access_token:
+            inventory.notes.append(
+                "Other item types (dashboards, lakehouses, notebooks and so on) "
+                "need a Fabric session and were not listed."
+            )
+            return inventory
+
+        client = FabricClient()
+        try:
+            items = await collect_pages(
+                lambda continuation_token: client.list_items(
+                    workspace_id=workspace_id,
+                    access_token=self._fabric_access_token,
+                    continuation_token=continuation_token,
+                )
+            )
+        except AppException:
+            inventory.notes.append(
+                "Other item types (dashboards, lakehouses, notebooks and so on) "
+                "could not be listed."
+            )
+            return inventory
+
+        inventory.other_items = [
+            WorkspaceInventoryItem(
+                id=str(item.get("id")),
+                name=str(item.get("displayName") or item.get("id")),
+                item_type=str(item.get("type")),
+            )
+            for item in items
+            if item.get("id")
+            and item.get("type")
+            and item.get("type") not in _POWERBI_LISTED_ITEM_TYPES
+        ]
+        return inventory
 
     async def _resolve_report(
         self,

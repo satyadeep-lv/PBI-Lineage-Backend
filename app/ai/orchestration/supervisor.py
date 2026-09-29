@@ -2,6 +2,7 @@ from app.ai.agents.impact_agent import ImpactAgent
 from app.ai.agents.measure_agent import MeasureAgent
 from app.ai.agents.report_agent import ReportAgent
 from app.ai.agents.semantic_model_agent import SemanticModelAgent
+from app.ai.agents.workspace_agent import WorkspaceAgent
 from app.ai.models.context import ResolvedAIContext
 from app.ai.models.enums import AIAnswerStatus, AIIntent
 from app.ai.models.evidence import EvidenceBundle
@@ -14,6 +15,10 @@ _AGENTS_BY_INTENT = {
     AIIntent.OBJECT_IMPACT: ImpactAgent(),
     AIIntent.REPORT_INFORMATION: ReportAgent(),
     AIIntent.SEMANTIC_MODEL_INFORMATION: SemanticModelAgent(),
+    AIIntent.WORKSPACE_INFORMATION: WorkspaceAgent(),
+    # AIService answers these itself (they need no evidence); a direct
+    # caller of the supervisor gets the overview of what is open.
+    AIIntent.CAPABILITIES: SemanticModelAgent(),
 }
 
 _OUT_OF_SCOPE_MESSAGE = (

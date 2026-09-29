@@ -3,6 +3,7 @@ import time
 import uuid
 
 from app.ai.agents.base import assign_evidence_ids
+from app.ai.composition.capabilities import capabilities_answer
 from app.ai.composition.deterministic_renderer import DeterministicAnswerRenderer
 from app.ai.composition.grounded_composer import ComposerFailure, compose
 from app.ai.composition.grounding_validator import (
@@ -17,11 +18,16 @@ from app.ai.models.evidence import EvidenceBundle, GroundedClaim
 from app.ai.models.requests import AIChatRequest
 from app.ai.models.responses import (
     AIChatResponse,
+    AIFocus,
     AIStatusResponse,
     AIToolCall,
     AIUsage,
 )
-from app.ai.orchestration.intent import classify_intent
+from app.ai.orchestration.intent import (
+    capability_kind,
+    classify_intent,
+    wants_workspace_inventory,
+)
 from app.ai.orchestration.supervisor import Supervisor
 from app.ai.orchestration.tool_loop import ToolLoopUnavailableError, run_tool_loop
 from app.ai.providers.base import ModelGateway
@@ -61,6 +67,9 @@ class AIService:
         self._gateway = gateway or build_model_gateway(settings)
         self._powerbi_access_token = powerbi_access_token
         self._fabric_access_token = fabric_access_token
+        # The last request resolved, so the tool loop and the fixed path of
+        # one request share a single resolution instead of fetching twice.
+        self._last_resolution: tuple[AIChatRequest, ResolvedAIContext] | None = None
 
     def status(self) -> AIStatusResponse:
         return AIStatusResponse(
@@ -72,11 +81,61 @@ class AIService:
         )
 
     async def _resolved_context(self, request: AIChatRequest) -> ResolvedAIContext:
+        if self._last_resolution is not None and self._last_resolution[0] is request:
+            return self._last_resolution[1]
+
         resolver = AIContextResolver(
             powerbi_access_token=self._powerbi_access_token,
             fabric_access_token=self._fabric_access_token,
         )
-        return await resolver.resolve(request.context)
+        resolved = await resolver.resolve(
+            request.context,
+            include_workspace_inventory=wants_workspace_inventory(
+                request.message,
+                request.context,
+            ),
+        )
+        self._last_resolution = (request, resolved)
+        return resolved
+
+    async def _capabilities_response(
+        self,
+        request: AIChatRequest,
+        *,
+        conversation_id: str,
+    ) -> AIChatResponse | None:
+        """Answer "what can you do?", "hi" or "thanks" without any evidence gate.
+
+        These ask about Power AI, not about the estate, so refusing them for
+        lacking lineage evidence was always wrong. The facts the answer does
+        state (what is open, how many reports) come from the same dossiers
+        as every other answer and are returned as its evidence.
+        """
+        kind = capability_kind(request.message)
+        if kind is None:
+            return None
+
+        suggestions = suggested_questions_for(request.context)
+        # "Thanks" says nothing about what is open, so nothing is fetched.
+        resolved = (
+            ResolvedAIContext()
+            if kind == "thanks"
+            else await self._resolved_context(request)
+        )
+        answer, evidence = capabilities_answer(
+            resolved,
+            kind=kind,
+            suggestions=suggestions,
+        )
+        return AIChatResponse(
+            conversation_id=conversation_id,
+            status=AIAnswerStatus.ANSWERED,
+            answer=answer,
+            evidence=assign_evidence_ids(evidence),
+            agent="capabilities",
+            suggested_questions=suggestions,
+            focus=focus_of(resolved),
+        )
 
     async def build_evidence_bundle(
         self,
@@ -155,6 +214,7 @@ class AIService:
             agent="tool_loop",
             suggested_questions=suggested_questions_for(request.context),
             usage=usage,
+            focus=focus_of(resolved_context),
             tool_trace=[
                 AIToolCall(
                     round=record.round,
@@ -185,6 +245,14 @@ class AIService:
         provider being configured, or on the host being able to reach one.
         """
         conversation_id = request.conversation_id or str(uuid.uuid4())
+
+        capabilities = await self._capabilities_response(
+            request,
+            conversation_id=conversation_id,
+        )
+        if capabilities is not None:
+            return capabilities
+
         bundle = await self.build_evidence_bundle(request)
 
         claims: list[GroundedClaim] = []
@@ -221,6 +289,7 @@ class AIService:
             agent=bundle.agent,
             suggested_questions=suggested_questions_for(request.context),
             usage=usage,
+            focus=focus_of(bundle.context),
         )
 
     async def generate(
@@ -246,6 +315,13 @@ class AIService:
 
         conversation_id = request.conversation_id or str(uuid.uuid4())
         metrics_registry.record_grounding_event("ai_requests_total")
+
+        capabilities = await self._capabilities_response(
+            request,
+            conversation_id=conversation_id,
+        )
+        if capabilities is not None:
+            return capabilities
 
         resolved_context = await self._resolved_context(request)
 
@@ -294,6 +370,7 @@ class AIService:
                 agent=bundle.agent,
                 suggested_questions=suggested_questions_for(request.context),
                 usage=None,
+                focus=focus_of(bundle.context),
             )
 
         answer, claims, usage, fallback_used = await self._compose_grounded_answer(
@@ -329,6 +406,7 @@ class AIService:
             agent=bundle.agent,
             suggested_questions=suggested_questions_for(request.context),
             usage=usage,
+            focus=focus_of(bundle.context),
         )
 
     async def _compose_grounded_answer(
@@ -380,3 +458,21 @@ class AIService:
             None,
             True,
         )
+
+
+def focus_of(context: ResolvedAIContext) -> AIFocus | None:
+    """The verified context an answer used, in the shape the panel reads."""
+    selected = context.resolved_object
+    focus = AIFocus(
+        workspace_id=context.workspace_id,
+        workspace_name=context.workspace_name,
+        report_id=context.report_id,
+        report_name=context.report_name,
+        semantic_model_id=context.semantic_model_id,
+        semantic_model_name=context.semantic_model_name,
+        object_type=selected.object_type if selected else None,
+        object_name=selected.qualified_name if selected else None,
+    )
+    if not any((focus.workspace_id, focus.report_id, focus.semantic_model_id)):
+        return None
+    return focus

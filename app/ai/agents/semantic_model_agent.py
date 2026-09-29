@@ -6,6 +6,12 @@ from app.ai.tools import dossier_tools
 
 NAME = "semantic_model_agent"
 
+_OPEN_SOMETHING_NOTE = (
+    "No report or semantic model is open, so this is what the workspace "
+    "contains. Open a report or semantic model to ask about its measures, "
+    "where its data comes from, and what would break if something changed."
+)
+
 
 class SemanticModelAgent:
     """Answers "what is here" rather than "explain this one object".
@@ -33,6 +39,28 @@ class SemanticModelAgent:
         ]
 
         if not evidence:
+            # Nothing narrower is open, but the workspace is: say what it
+            # holds, and what opening one of its reports or models unlocks,
+            # rather than stopping at "open something and ask again".
+            workspace = dossier_tools.workspace_dossier(context)
+            inventory = context.workspace_inventory
+            if (
+                workspace
+                and inventory is not None
+                and (
+                    inventory.reports is not None
+                    or inventory.semantic_models is not None
+                )
+            ):
+                return build_bundle(
+                    question=question,
+                    context=context,
+                    agent=NAME,
+                    evidence=workspace,
+                    status=AIAnswerStatus.ANSWERED,
+                    missing_information=[_OPEN_SOMETHING_NOTE],
+                )
+
             return build_bundle(
                 question=question,
                 context=context,
