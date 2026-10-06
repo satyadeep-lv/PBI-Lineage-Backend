@@ -37,6 +37,7 @@ class Tool:
             "semantic_model": context.parsed_semantic_model is not None,
             "report_definition": context.report_definition is not None,
             "resolved_object": context.resolved_object is not None,
+            "workspace_inventory": context.workspace_inventory is not None,
         }
         return all(
             checks.get(requirement, False) for requirement in self.requires_context

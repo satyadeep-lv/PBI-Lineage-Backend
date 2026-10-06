@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -59,6 +59,25 @@ class AIUsage(BaseModel):
     tokens: int
 
 
+class AIFocus(BaseModel):
+    """What the answer was actually about, after the backend verified it.
+
+    The panel's context chip shows this instead of its own page state, so a
+    report or model the backend could not read is visibly missing rather
+    than silently assumed.
+    """
+
+    source: Literal["page", "question", "conversation"] = "page"
+    workspace_id: str | None = None
+    workspace_name: str | None = None
+    report_id: str | None = None
+    report_name: str | None = None
+    semantic_model_id: str | None = None
+    semantic_model_name: str | None = None
+    object_type: str | None = None
+    object_name: str | None = None
+
+
 class AIChatResponse(BaseModel):
     conversation_id: str
 
@@ -78,3 +97,6 @@ class AIChatResponse(BaseModel):
 
     # None when the model was never called (e.g. insufficient_evidence).
     usage: AIUsage | None = None
+
+    # The verified context the answer used; None when nothing was resolved.
+    focus: AIFocus | None = None

@@ -86,6 +86,21 @@ _TOOLS: tuple[Tool, ...] = (
         parameters=_schema({}),
     ),
     Tool(
+        name="workspace_overview",
+        description=(
+            "Describe the workspace in context: how many reports (and which "
+            "are paginated), semantic models and other items (dashboards, "
+            "lakehouses, notebooks, ...) it contains, each by name, which "
+            "semantic model each report uses, and which reports use each "
+            "semantic model. Use this for any question about the workspace "
+            "itself, such as 'how many reports do we have', 'what is in this "
+            "workspace' or 'which semantic models are there'."
+        ),
+        requires_context=frozenset({"workspace_inventory"}),
+        handler=agent_tools.workspace_overview,
+        parameters=_schema({}),
+    ),
+    Tool(
         name="search_model",
         description=(
             "Find measures, columns or tables whose name contains a term. "

@@ -86,7 +86,7 @@ async def stream_chat_response(
     retracted later.
 
     Event contract (what the frontend's `streamChatMessage` parses):
-      metadata -> {conversation_id, status, agent}
+      metadata -> {conversation_id, status, agent, focus}
       evidence -> {evidence: [...]}
       delta    -> {text, delta}: the next piece of the answer
       complete -> the full AIChatResponse. It is authoritative: the client
@@ -110,6 +110,10 @@ async def stream_chat_response(
             "conversation_id": response.conversation_id,
             "status": response.status.value,
             "agent": response.agent,
+            # The panel's context chip reads this before the answer lands.
+            "focus": (
+                response.focus.model_dump(mode="json") if response.focus else None
+            ),
         },
     )
 

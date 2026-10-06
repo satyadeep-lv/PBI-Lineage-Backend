@@ -17,6 +17,7 @@ class Section:
 
 
 _CONTEXT = Section(0, "Context")
+_ABOUT_WORKSPACE = Section(4, "About this workspace")
 _ABOUT_REPORT = Section(5, "About this report")
 _ABOUT_MODEL = Section(6, "About this semantic model")
 _DEFINITION = Section(10, "Definition")
@@ -31,11 +32,18 @@ _TABLE_IMPACT = Section(55, "Tables affected")
 _VISUAL_IMPACT = Section(60, "Visual impact")
 _VISUAL_FIELDS = Section(62, "Visuals and the fields they use")
 _REPORTS = Section(65, "Reports using this semantic model")
+_WORKSPACE_REPORTS = Section(66, "Reports in this workspace")
+_WORKSPACE_MODELS = Section(67, "Semantic models in this workspace")
+_WORKSPACE_ITEMS = Section(68, "Other items in this workspace")
 _RELATED = Section(70, "Related objects")
 _COVERAGE = Section(90, "What was checked")
 
 _BY_FACT_AND_OBJECT: dict[tuple[str, str], Section] = {
     ("relationship", "context"): _CONTEXT,
+    ("definition", "workspace"): _ABOUT_WORKSPACE,
+    ("usage", "workspace_report"): _WORKSPACE_REPORTS,
+    ("relationship", "workspace_semantic_model"): _WORKSPACE_MODELS,
+    ("relationship", "workspace_item"): _WORKSPACE_ITEMS,
     ("definition", "report"): _ABOUT_REPORT,
     ("definition", "semantic_model"): _ABOUT_MODEL,
     ("usage", "measure"): _REPORT_FIELDS,
