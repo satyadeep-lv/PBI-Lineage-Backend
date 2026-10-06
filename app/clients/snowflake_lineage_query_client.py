@@ -4,24 +4,18 @@ from typing import Any
 from app.core.exceptions import UpstreamInvalidResponseError, UpstreamRequestError
 from app.services.auth.snowflake_session_store import SnowflakeConnection
 
+# SELECT * rather than a fixed column list: Snowflake has been adding columns
+# to this function (SOURCE_DETAILS / TARGET_DETAILS carry the granular object
+# type), and naming a column an older account lacks would fail every trace.
 _GET_LINEAGE_SQL = """
-SELECT
-    DISTANCE,
-    SOURCE_OBJECT_DATABASE,
-    SOURCE_OBJECT_SCHEMA,
-    SOURCE_OBJECT_NAME,
-    SOURCE_OBJECT_DOMAIN,
-    SOURCE_COLUMN_NAME,
-    SOURCE_STATUS,
-    TARGET_OBJECT_DATABASE,
-    TARGET_OBJECT_SCHEMA,
-    TARGET_OBJECT_NAME,
-    TARGET_OBJECT_DOMAIN,
-    TARGET_COLUMN_NAME,
-    TARGET_STATUS,
-    PROCESS
+SELECT *
 FROM TABLE(SNOWFLAKE.CORE.GET_LINEAGE(%s, %s, %s, %s))
 """.strip()
+# Semi-structured columns arrive from the connector as JSON text.
+_VARIANT_COLUMNS = ("PROCESS", "SOURCE_DETAILS", "TARGET_DETAILS")
+# The connection's network_timeout (60 s) otherwise doubles as a client-side
+# cancel timer on every statement, which a wide lineage graph can outlast.
+_GET_LINEAGE_TIMEOUT_SECONDS = 120
 
 
 class SnowflakeLineageQueryClient:
@@ -46,6 +40,7 @@ class SnowflakeLineageQueryClient:
             cursor.execute(
                 _GET_LINEAGE_SQL,
                 (object_name, object_domain, direction, max_distance),
+                timeout=_GET_LINEAGE_TIMEOUT_SECONDS,
             )
             description = cursor.description
             rows = cursor.fetchall()
@@ -63,12 +58,14 @@ class SnowflakeLineageQueryClient:
             if len(row) != len(columns):
                 raise UpstreamInvalidResponseError("snowflake")
             mapped = dict(zip(columns, row, strict=True))
-            mapped["PROCESS"] = self._process(mapped.get("PROCESS"))
+            for column in _VARIANT_COLUMNS:
+                if column in mapped:
+                    mapped[column] = self._variant(mapped[column])
             results.append(mapped)
         return results
 
     @staticmethod
-    def _process(value: Any) -> Any:
+    def _variant(value: Any) -> Any:
         if not isinstance(value, str):
             return value
         try:

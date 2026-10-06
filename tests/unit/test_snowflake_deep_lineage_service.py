@@ -1,8 +1,14 @@
-from threading import Lock
+from threading import Event, Lock
 from time import sleep
 
 from app.clients.snowflake_lineage_query_client import (
     SnowflakeLineageQueryClient,
+)
+from app.clients.snowflake_metadata_client import (
+    SnowflakeColumnInfo,
+    SnowflakeHistoryPage,
+    SnowflakeSchemaObject,
+    SnowflakeViewDefinition,
 )
 from app.core.exceptions import UpstreamRequestError
 from app.schemas.snowflake_lineage import (
@@ -13,6 +19,49 @@ from app.services.snowflake_deep_lineage_service import (
     SnowflakeDeepLineageService,
     _WarningCollector,
 )
+from app.services.snowflake_transformation_service import (
+    SnowflakeTransformationService,
+)
+
+
+class _NoMetadata:
+    """Every definition lookup finds nothing, so these tests see the walk alone."""
+
+    def show_objects(self, connection, **kwargs):
+        return {}
+
+    def show_views(self, connection, **kwargs):
+        return []
+
+    def show_dynamic_tables(self, connection, **kwargs):
+        return {}
+
+    def get_ddl(self, connection, **kwargs):
+        return None
+
+    def table_columns(self, connection, **kwargs):
+        return []
+
+    def recent_history(self, connection, **kwargs):
+        return SnowflakeHistoryPage()
+
+    def access_history_writes(self, connection, **kwargs):
+        return []
+
+    def account_usage_writes(self, connection, **kwargs):
+        return []
+
+    def account_usage_queries(self, connection, **kwargs):
+        return []
+
+
+def _service(*, query_client) -> SnowflakeDeepLineageService:
+    return SnowflakeDeepLineageService(
+        query_client=query_client,
+        transformation_service=SnowflakeTransformationService(
+            metadata_client=_NoMetadata()
+        ),
+    )
 
 
 def _row(
@@ -78,7 +127,7 @@ class _ParallelQueryClient:
 
 def test_deep_column_lineage_expands_seven_frontier_nodes_in_parallel():
     query_client = _ParallelQueryClient()
-    service = SnowflakeDeepLineageService(query_client=query_client)
+    service = _service(query_client=query_client)
 
     result = service.trace(
         object(),
@@ -132,7 +181,7 @@ def test_table_lineage_uses_table_domain_without_column_suffix():
         ]
     )
 
-    result = SnowflakeDeepLineageService(query_client=query_client).trace(
+    result = _service(query_client=query_client).trace(
         object(),
         account_identifier="organization-account",
         request=SnowflakeDeepLineageRequest(
@@ -149,7 +198,7 @@ def test_table_lineage_uses_table_domain_without_column_suffix():
 def test_already_visited_five_level_frontier_is_not_queried_again():
     query_client = _StaticQueryClient([_row("TARGET", "TARGET", distance=5)])
 
-    result = SnowflakeDeepLineageService(query_client=query_client).trace(
+    result = _service(query_client=query_client).trace(
         object(),
         account_identifier="organization-account",
         request=SnowflakeDeepLineageRequest(
@@ -168,7 +217,7 @@ def test_already_visited_five_level_frontier_is_not_queried_again():
 def test_query_limit_marks_response_truncated():
     query_client = _StaticQueryClient([_row("SOURCE", "TARGET", distance=5)])
 
-    result = SnowflakeDeepLineageService(query_client=query_client).trace(
+    result = _service(query_client=query_client).trace(
         object(),
         account_identifier="organization-account",
         request=SnowflakeDeepLineageRequest(
@@ -207,7 +256,7 @@ class _QuotedBoundaryQueryClient:
 def test_five_level_boundary_requotes_case_sensitive_identifiers():
     query_client = _QuotedBoundaryQueryClient()
 
-    SnowflakeDeepLineageService(query_client=query_client).trace(
+    _service(query_client=query_client).trace(
         object(),
         account_identifier="organization-account",
         request=SnowflakeDeepLineageRequest(
@@ -235,9 +284,7 @@ class _FailingBranchQueryClient:
 
 
 def test_non_root_branch_failure_returns_partial_lineage_with_warning():
-    result = SnowflakeDeepLineageService(
-        query_client=_FailingBranchQueryClient()
-    ).trace(
+    result = _service(query_client=_FailingBranchQueryClient()).trace(
         object(),
         account_identifier="organization-account",
         request=SnowflakeDeepLineageRequest(
@@ -268,7 +315,7 @@ class _DownstreamQueryClient:
 def test_downstream_traversal_continues_from_target_boundary():
     query_client = _DownstreamQueryClient()
 
-    result = SnowflakeDeepLineageService(query_client=query_client).trace(
+    result = _service(query_client=query_client).trace(
         object(),
         account_identifier="organization-account",
         request=SnowflakeDeepLineageRequest(
@@ -287,7 +334,7 @@ def test_downstream_traversal_continues_from_target_boundary():
 
 
 def test_process_evidence_can_be_omitted():
-    result = SnowflakeDeepLineageService(
+    result = _service(
         query_client=_StaticQueryClient([_row("SOURCE", "TARGET", distance=1)])
     ).trace(
         object(),
@@ -305,15 +352,17 @@ def test_process_evidence_can_be_omitted():
 
 class _Cursor:
     def __init__(self) -> None:
-        self.description = [("DISTANCE",), ("PROCESS",)]
+        self.description = [("DISTANCE",), ("PROCESS",), ("SOURCE_DETAILS",)]
         self.parameters = None
         self.closed = False
 
-    def execute(self, query, parameters):
+    def execute(self, query, parameters, timeout=None):
+        self.query = query
         self.parameters = parameters
+        self.timeout = timeout
 
     def fetchall(self):
-        return [(1, '{"type":"QUERY"}')]
+        return [(1, '{"type":"QUERY"}', '{"dataset_type":"VIEW"}')]
 
     def close(self):
         self.closed = True
@@ -344,7 +393,12 @@ def test_query_client_binds_get_lineage_arguments_and_decodes_process():
         "UPSTREAM",
         5,
     )
+    # SELECT * keeps working as Snowflake adds columns to GET_LINEAGE.
+    assert connection.query_cursor.query.startswith("SELECT *")
+    # An explicit timeout, rather than the connection's 60 s cancel timer.
+    assert connection.query_cursor.timeout >= 60
     assert rows[0]["PROCESS"] == {"type": "QUERY"}
+    assert rows[0]["SOURCE_DETAILS"] == {"dataset_type": "VIEW"}
     assert connection.query_cursor.closed is True
 
 
@@ -411,7 +465,7 @@ class _DeepFailureQueryClient:
 def _trace_with(error: Exception):
     client = _DeepFailureQueryClient(error)
     return (
-        SnowflakeDeepLineageService(query_client=client).trace(
+        _service(query_client=client).trace(
             object(),
             account_identifier="acct",
             request=SnowflakeDeepLineageRequest(
@@ -461,7 +515,7 @@ def test_a_root_query_failure_still_fails_the_request():
             raise UpstreamRequestError("snowflake", detail="boom")
 
     try:
-        SnowflakeDeepLineageService(query_client=_AlwaysFails()).trace(
+        _service(query_client=_AlwaysFails()).trace(
             object(),
             account_identifier="acct",
             request=SnowflakeDeepLineageRequest(
@@ -503,7 +557,7 @@ def test_traversal_consolidates_past_snowflakes_five_level_cap():
     # re-rooting at each boundary and merging into one snapshot.
     client = _ChainQueryClient()
 
-    result = SnowflakeDeepLineageService(query_client=client).trace(
+    result = _service(query_client=client).trace(
         object(),
         account_identifier="acct",
         request=SnowflakeDeepLineageRequest(
@@ -526,7 +580,7 @@ def test_traversal_consolidates_past_snowflakes_five_level_cap():
 def test_traversal_stops_at_max_depth_without_overshooting():
     client = _ChainQueryClient()
 
-    result = SnowflakeDeepLineageService(query_client=client).trace(
+    result = _service(query_client=client).trace(
         object(),
         account_identifier="acct",
         request=SnowflakeDeepLineageRequest(
@@ -642,7 +696,7 @@ def test_a_column_boundary_is_requeried_as_a_column_not_as_its_container():
     # read the whole string as a table: "Table 'DB.S.T.COL' does not exist".
     client = _DomainRecordingClient()
 
-    SnowflakeDeepLineageService(query_client=client).trace(
+    _service(query_client=client).trace(
         object(),
         account_identifier="acct",
         request=SnowflakeDeepLineageRequest(
@@ -662,7 +716,7 @@ def test_a_column_boundary_is_requeried_as_a_column_not_as_its_container():
 def test_a_view_boundary_is_traversed_rather_than_silently_dropped():
     client = _DomainRecordingClient(boundary_domain="VIEW")
 
-    result = SnowflakeDeepLineageService(query_client=client).trace(
+    result = _service(query_client=client).trace(
         object(),
         account_identifier="acct",
         request=SnowflakeDeepLineageRequest(
@@ -686,7 +740,7 @@ def test_an_untraversable_boundary_is_reported_instead_of_dropped():
     # decides whether the walk can continue.
     client = _DomainRecordingClient(boundary_domain="STAGE", column=None)
 
-    result = SnowflakeDeepLineageService(query_client=client).trace(
+    result = _service(query_client=client).trace(
         object(),
         account_identifier="acct",
         request=SnowflakeDeepLineageRequest(
@@ -727,7 +781,7 @@ class _RootEchoClient:
 
 
 def test_the_requested_root_column_is_not_duplicated_by_its_container():
-    result = SnowflakeDeepLineageService(query_client=_RootEchoClient()).trace(
+    result = _service(query_client=_RootEchoClient()).trace(
         object(),
         account_identifier="acct",
         request=SnowflakeDeepLineageRequest(
@@ -748,3 +802,129 @@ def test_the_requested_root_column_is_not_duplicated_by_its_container():
     assert roots[0].object_domain == "TABLE"
     # The root is connected, rather than sitting beside the graph edgeless.
     assert result.snapshot.dependencies[0].target.object_id == roots[0].object_id
+
+
+def _link(source: str, target: str, *, distance: int) -> dict:
+    row = _row(source, target, distance=distance)
+    row.update(SOURCE_OBJECT_SCHEMA="S", TARGET_OBJECT_SCHEMA="S")
+    return row
+
+
+class _NoBarrierClient:
+    """A's call only finishes once C -- found through B -- has been queried."""
+
+    def __init__(self) -> None:
+        self.c_started = Event()
+        self.a_saw_c: bool | None = None
+
+    def get_lineage(self, connection, *, object_name, **kwargs):
+        if object_name == "DB.S.R.VALUE":
+            return [_link("A", "R", distance=5), _link("B", "R", distance=5)]
+        if object_name == "DB.S.A.VALUE":
+            self.a_saw_c = self.c_started.wait(timeout=5)
+            return []
+        if object_name == "DB.S.B.VALUE":
+            return [_link("C", "B", distance=5)]
+        if object_name == "DB.S.C.VALUE":
+            self.c_started.set()
+        return []
+
+
+def test_a_boundary_is_queried_without_waiting_for_slower_siblings():
+    # Level by level, C (level 10) could not start until A (level 5) had
+    # finished, and A here waits for C: the walk would stall for 5 s.
+    client = _NoBarrierClient()
+
+    result = _service(query_client=client).trace(
+        object(),
+        account_identifier="acct",
+        request=SnowflakeDeepLineageRequest(
+            object_name="DB.S.R",
+            column_name="VALUE",
+            include_transformations=False,
+            infer_missing_lineage=False,
+        ),
+    )
+
+    assert client.a_saw_c is True
+    assert result.query_count == 4
+
+
+class _OneView(_NoMetadata):
+    """DB.S.A is a view reading I.VALUE; DB.S.I has that column."""
+
+    def show_objects(self, connection, **kwargs):
+        return {
+            "A": SnowflakeSchemaObject(name="A", kind="VIEW"),
+            "I": SnowflakeSchemaObject(name="I", kind="TABLE"),
+        }
+
+    def show_views(self, connection, *, database, schema_name, **kwargs):
+        return [
+            SnowflakeViewDefinition("A", "create view A as select i.value from S.I i")
+        ]
+
+    def table_columns(self, connection, *, database, schema_name, table_names):
+        return [
+            SnowflakeColumnInfo(
+                table_name="I",
+                column_name="VALUE",
+                ordinal_position=1,
+                data_type="NUMBER",
+            )
+        ]
+
+
+class _ShorterPathLaterClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.lock = Lock()
+
+    def get_lineage(self, connection, *, object_name, **kwargs):
+        with self.lock:
+            self.calls.append(object_name)
+        if object_name == "DB.S.R.VALUE":
+            return [_link("A", "R", distance=5), _link("B", "R", distance=5)]
+        if object_name == "DB.S.I.VALUE":
+            # Reached through A (level 5) and inference (level 6): X at 11.
+            return [_link("X", "I", distance=5)]
+        if object_name == "DB.S.B.VALUE":
+            # The shorter path to X (level 10) answers last.
+            sleep(0.3)
+            return [_link("X", "B", distance=5)]
+        return []
+
+
+def test_a_node_found_again_on_a_shorter_path_is_requeried_from_there():
+    client = _ShorterPathLaterClient()
+    service = SnowflakeDeepLineageService(
+        query_client=client,
+        transformation_service=SnowflakeTransformationService(
+            metadata_client=_OneView()
+        ),
+    )
+
+    result = service.trace(
+        object(),
+        account_identifier="acct",
+        request=SnowflakeDeepLineageRequest(
+            object_name="DB.S.R",
+            column_name="VALUE",
+            search_account_usage=False,
+        ),
+    )
+
+    assert client.calls.count("DB.S.X.VALUE") == 2
+    levels = {
+        item.qualified_name: item.lineage_level for item in result.transformations
+    }
+    assert levels["DB.S.I.VALUE"] == 6
+    assert levels["DB.S.X.VALUE"] == 10
+    inferred = [
+        edge
+        for edge in result.snapshot.dependencies
+        if edge.dependency_type == "SQL_INFERRED"
+    ]
+    assert [(edge.source.qualified_name, edge.distance) for edge in inferred] == [
+        ("DB.S.I.VALUE", 6)
+    ]

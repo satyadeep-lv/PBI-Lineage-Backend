@@ -1078,8 +1078,12 @@ Trace one column by adding `column_name`; `object_domain` is inferred as
 ```
 
 The service calls `GET_LINEAGE` with at most five levels. Every object returned
-at the five-level boundary becomes a new frontier root; independent roots in a
-frontier are queried concurrently up to `max_concurrency`. Stable IDs, visited
+at the five-level boundary becomes a new root, queried as soon as the call that
+found it returns, not when the slowest call of its level does. Roots run
+concurrently up to `max_concurrency`; definition reads use a separate pool of
+the same size. A node later found on a shorter path is queried again from
+there, so the reported distances do not depend on which calls finish first.
+Stable IDs, visited
 roots, and edge deduplication prevent repeated work and cycles. `max_depth`,
 `max_nodes`, `max_edges`, and `max_queries` bound each request. A failed root
 query fails the request; a failed deeper branch returns the partial snapshot
@@ -1129,13 +1133,65 @@ the second wave — and a raw connector exception raised there (notably from
 opening a cursor on a connection that has dropped) used to escape the handler
 and fail the whole request, discarding the five levels already traced.
 
-This ports the supplied procedure's recursive five-level traversal into the
-service and supports both table and column roots. It does not create or call
-`TRACE_COLUMN_LINEAGE` in Snowflake. The procedure's heuristic `GET_DDL` and
-query-history fallback for `COLUMN_TRANSFORMATION`/`MODIFICATION_SQL` is not
-executed: that path requires broader history privileges, can disclose SQL text,
-and is less authoritative than `GET_LINEAGE`. If Snowflake returns no lineage,
-the API returns the root with no inferred edges instead of guessing.
+This ports the supplied `TRACE_COLUMN_LINEAGE` procedure into the service,
+including its `COLUMN_TRANSFORMATION` / `MODIFICATION_SQL` output, without
+creating anything in Snowflake. Every request is read-only and runs under the
+caller's own Snowflake role.
+
+**Transformations** (`include_transformations`, default on). The response's
+`transformations` list has one entry per traced node, the starting
+object/column included at `lineage_level` 0, with `parent_qualified_names`
+(the procedure's `PARENT_OBJECT_NAME`), `column_transformation` (the
+expression that produces the column, followed through CTEs and subqueries),
+`transformation_kind`, `transformation_steps`, and `modification_sql` with its
+source, query id, query type and time. Snapshot objects also carry their real
+`object_type` (`VIEW`, `DYNAMIC TABLE` …), which GET_LINEAGE reports as TABLE.
+Where the SQL comes from:
+
+- Views, materialized views, dynamic and external tables: `SHOW VIEWS` /
+  `SHOW DYNAMIC TABLES` text (one call per schema, no warehouse needed), with
+  `GET_DDL` as the per-object fallback. A secure view's definition is visible
+  only to its owner role; that is reported as a warning, not an error.
+- Tables: the statement GET_LINEAGE's `PROCESS` names for the edge, if any;
+  otherwise the newest `INSERT` / `MERGE` / `UPDATE` / `COPY` / CTAS / `CLONE`
+  that wrote the table. `INFORMATION_SCHEMA.QUERY_HISTORY` is searched first,
+  paged back through its 7 days. With `search_account_usage` (default on),
+  tables still unresolved are looked up in `ACCOUNT_USAGE.ACCESS_HISTORY`,
+  which records each write's real target, or by text in
+  `ACCOUNT_USAGE.QUERY_HISTORY` if that is not readable. The lookback is
+  `history_lookback_days` (default 365). `INSERT … VALUES` statements are
+  skipped, because they hold data rather than logic. Each candidate statement
+  is parsed, so a same-named table in another database or schema, or a table
+  that is only read, is never taken as the target.
+
+All of this is batched and concurrent. One `SHOW` runs per schema and kind,
+one `INFORMATION_SCHEMA.COLUMNS` query per schema, and one history search
+covers every table, where the procedure ran several queries per lineage row.
+Definitions are read while the walk is still running. `metadata_query_count`
+reports the number of these reads.
+
+**Inference** (`infer_missing_lineage`, default on; upstream only). When
+GET_LINEAGE has nothing for a node, the node's own SQL is read and the
+columns it selects from become edges with `dependency_type: "SQL_INFERRED"`,
+traced further like any other node. A candidate is kept only if the column
+exists in that table (`INFORMATION_SCHEMA.COLUMNS`). An unqualified column
+that several tables could own goes to the first table that has it, as in the
+procedure. Each inferred edge is announced with `SNOWFLAKE_LINEAGE_INFERRED`.
+
+**Privileges**, beyond those GET_LINEAGE needs:
+
+- Some privilege on each object, for SHOW, plus a running warehouse for the
+  `INFORMATION_SCHEMA` and `ACCOUNT_USAGE` queries.
+- `INFORMATION_SCHEMA.QUERY_HISTORY` shows only the role's own statements, and
+  those run on warehouses it can `MONITOR` / `OPERATE`.
+- Loads run by service users need `ACCOUNT_USAGE`: the `GOVERNANCE_VIEWER`
+  database role, or `IMPORTED PRIVILEGES` on the `SNOWFLAKE` database.
+- A dynamic table's text needs `OWNERSHIP` or `MONITOR` on it.
+
+A lookup that fails becomes a `SNOWFLAKE_TRANSFORMATION_LOOKUP_FAILED` warning
+that carries Snowflake's reason, and the node falls back to the procedure's
+descriptive text ("… (source — no transformation SQL found)", "… (base table
+column — no ingestion history found)").
 
 `GET_LINEAGE` is a Snowflake Enterprise Edition feature and each authenticated
 role still needs access to the relevant objects; inaccessible objects produce a

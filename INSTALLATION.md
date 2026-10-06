@@ -447,6 +447,12 @@ Provide a Snowflake account and a least-privilege role with:
 - Visibility of the tables or columns being traced.
 - Permission to call `SNOWFLAKE.CORE.GET_LINEAGE` for the target objects.
 - An account/edition that supports the required lineage function.
+- For column transformations and modification SQL: a running warehouse, and
+  the `GOVERNANCE_VIEWER` database role or `IMPORTED PRIVILEGES` on the
+  `SNOWFLAKE` database, so that loads run by other users can be found in
+  `ACCOUNT_USAGE`. Without this, only the role's own statements from the last
+  7 days are searched. Reading a dynamic table's definition needs `MONITOR`
+  on it.
 
 Supported session methods are password/MFA, RSA key pair, local external
 browser, and OAuth:
