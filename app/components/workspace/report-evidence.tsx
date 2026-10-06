@@ -2,6 +2,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { BookOpenCheck, Database, FileBarChart2, TableProperties } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { TableSearchHeader } from "~/components/ui/table-search-header";
 import { MeasureAiDefinition, type MeasureDefinitionTarget } from "~/components/workspace/measure-ai-definition";
 import { SnowflakeColumnLineage, SnowflakeObjectLineage, type SnowflakeColumnTarget, type SnowflakeTraceTarget } from "~/components/workspace/snowflake-object-lineage";
 import {
@@ -142,14 +143,12 @@ type ReportSourceTableRow = {
   source_schema?: string | null;
   table_name?: string | null;
   source_object_type: string;
-  /** Non-null only when this table was reached through another workspace's semantic model. */
   via_workspace_name?: string | null;
   via_semantic_model_name?: string | null;
   via_semantic_table?: string | null;
 };
 type ReportSourceTablesResponse = { rows: ReportSourceTableRow[]; count: number; warnings: ExplorerEvidenceWarning[] };
 
-/** One parsed semantic object, already carrying its own workspace/report/model context. */
 type SemanticModelObjectRow = {
   workspace_id: string;
   workspace_name: string;
@@ -165,7 +164,6 @@ type SemanticModelObjectRow = {
 };
 type SemanticModelObjectsResponse = { rows: SemanticModelObjectRow[]; count: number; warnings: ExplorerEvidenceWarning[] };
 
-/** A DAX dependency traced all the way down to the physical column it reads. */
 type MeasureSourceLineageRow = {
   semantic_table?: string | null;
   semantic_object_name: string;
@@ -175,12 +173,6 @@ type MeasureSourceLineageRow = {
 
 type SnapshotSourceRow = { semantic_table: string; source_fully_qualified_name?: string | null };
 
-/**
- * `/explorer/snapshot` returns every explorer dataset from one request. The
- * mapping grid needs three of them, and fetching them separately would repeat
- * the expensive part — the workspace, report and TMDL definition fetches —
- * once per dataset.
- */
 type ExplorerSnapshot = {
   warnings: ExplorerEvidenceWarning[];
   semantic_model_objects: { rows: SemanticModelObjectRow[]; count: number };
@@ -190,39 +182,19 @@ type ExplorerSnapshot = {
 
 type MetadataResponse = { reconciliation: { matched_count: number; definition_only_count: number; xmla_only_count: number } };
 
-/**
- * One selection is always enough here because both screens work a single
- * report at a time; `semantic_model_id` is deliberately omitted so the backend
- * infers the binding itself (which is also what makes a model in another
- * workspace work). Both `include_*` flags cost real upstream API calls, so
- * they default to off.
- */
 function explorerReportsBody(workspaceId: string, reportId: string, options?: { includeCrossModelMatching?: boolean; includeGatewaySources?: boolean }) {
   return {
     reports: [{ workspace_id: workspaceId, report_id: reportId }],
     include_gateway_sources: options?.includeGatewaySources ?? false,
     include_cross_model_matching: options?.includeCrossModelMatching ?? false,
-    // Ordinary resolution, not an expensive scan: it only costs anything when a
-    // composite model is actually present, and it is what makes a cross-workspace
-    // table report its real database instead of stopping at the Power BI boundary.
     resolve_cross_workspace_sources: true,
     report_definition_format: "PBIR",
     semantic_model_definition_format: "TMDL",
   };
 }
 
-/**
- * The five report-scoped evidence views, with their section tabs and every
- * call behind them.
- *
- * Both Explorer and Report lineage render this, so the two screens show the
- * same tabs against the same endpoints; they differ only in how the report
- * reaches them — Explorer picks one inside a workspace, Report lineage picks
- * one from anywhere in the estate.
- */
 export function ReportEvidence({ binding, modelNames, activeSection, onSectionChange }: {
   binding: ReportBinding;
-  /** Workspace model names, when the caller has them, so a multi-model grid can label each row. */
   modelNames?: Map<string, string>;
   activeSection: ReportSection;
   onSectionChange: (section: ReportSection) => void;
@@ -233,18 +205,11 @@ export function ReportEvidence({ binding, modelNames, activeSection, onSectionCh
   const { workspace, report } = binding;
   const workspaceId = workspace.id;
   const reportId = report.id;
-  // Drive semantic evidence from the report's own binding rather than from a
-  // model that happens to be listed in this workspace: a report can be bound to
-  // a model in another workspace, and the caller's resolution (or Power BI's
-  // `dataset_workspace_id`) is the only reliable proof of where that model lives.
   const boundModelId = binding.semanticModelId ?? report.dataset_id ?? null;
   const boundModelWorkspaceId = binding.semanticModelWorkspaceId ?? report.dataset_workspace_id ?? workspaceId;
   const boundModelName = binding.semanticModelName ?? (boundModelId ? modelNames?.get(boundModelId) ?? null : null);
   const boundModel = boundModelId && boundModelName ? { id: boundModelId, name: boundModelName } : null;
 
-  // A section's evidence is only worth fetching once that section is on screen.
-  // The session cache serves it from memory afterwards, so moving between
-  // sections stays instant while never paying for one left unopened.
   const reportDetailQuery = useQuery({
     queryKey: ["explorer", "report", apiOrigin, workspaceId, reportId],
     queryFn: () => requestJson<Report>(apiOrigin, `/api/v1/workspaces/${workspaceId}/reports/${reportId}`),
@@ -307,21 +272,34 @@ function ReportDetailTab({ workspace, selectedReport, reportSemanticModel, seman
   workspace: Workspace | null;
   selectedReport: Report | null;
   reportSemanticModel: { id: string; name: string } | null;
-  /** Set when Power BI named a semantic model, even if its name could not be found. */
   semanticModelId: string | null;
   detailQuery: UseQueryResult<Report, Error>;
   pagesQuery: UseQueryResult<ReportPagesResponse, Error>;
 }) {
+  const [searchTerm, setSearchTerm] = useState("");
   const pages = pagesQuery.data?.pages ?? [];
   const pageRows: ExplorerGridRow[] = pages.map((page) => ({ id: page.name, pageOrder: page.order + 1, pageName: page.display_name, pageId: page.name }));
+
+  const filteredRows = useMemo(() => {
+    if (!searchTerm.trim()) return pageRows;
+    const q = searchTerm.toLowerCase();
+    return pageRows.filter((row) => Object.values(row).some((val) => String(val ?? "").toLowerCase().includes(q)));
+  }, [pageRows, searchTerm]);
+
   const context = makeExportContext(workspace, selectedReport, reportSemanticModel);
   const semanticModelValue = reportSemanticModel?.name ?? (semanticModelId ? VALUE.notFound : VALUE.notAvailable);
+
   return <div className="space-y-6">
     <SectionHeading icon={<FileBarChart2 className="size-5" />} title={SECTION_HEADING["report-detail"]} text="The pages of the selected report, in the order they appear. Each report is read on its own, so its pages are ready before you look at its semantic model and data sources." />
     {detailQuery.isLoading || pagesQuery.isLoading ? <ExplorerLoading label="Loading the selected report and its pages" /> : null}
     {detailQuery.isError || pagesQuery.isError ? <EvidenceError error={detailQuery.error ?? pagesQuery.error} fallback="The selected report's details are not available for this workspace." /> : null}
     {detailQuery.data && <div className="grid border-y border-zinc-200 md:grid-cols-4"><DetailItem label={COLUMN.reportType} value={reportTypeLabel(detailQuery.data.report_type)} /><DetailItem label={COLUMN.reportFormat} value={reportFormatLabel(detailQuery.data.format)} /><DetailItem label={COLUMN.semanticModel} value={semanticModelValue} /><DetailItem label={COLUMN.pageCount} value={String(pages.length)} /></div>}
-    {!pagesQuery.isLoading && !pagesQuery.isError && <ExplorerGrid rowData={pageRows} columnDefs={[{ field: "pageOrder", headerName: COLUMN.pageOrder, minWidth: 130 }, { field: "pageName", headerName: COLUMN.pageName, minWidth: 280, flex: 1 }, exportOnlyColumn<ExplorerGridRow>("pageId", COLUMN.pageId)]} emptyMessage="No pages were returned for this report." exportFileName={reportFileName(selectedReport, "pages")} exportContext={context} />}
+    {!pagesQuery.isLoading && !pagesQuery.isError && (
+      <>
+        <TableSearchHeader searchTerm={searchTerm} onSearchChange={setSearchTerm} placeholder="Search pages..." />
+        <ExplorerGrid rowData={filteredRows} columnDefs={[{ field: "pageOrder", headerName: COLUMN.pageOrder, minWidth: 130 }, { field: "pageName", headerName: COLUMN.pageName, minWidth: 280, flex: 1 }, exportOnlyColumn<ExplorerGridRow>("pageId", COLUMN.pageId)]} emptyMessage="No pages were returned for this report." exportFileName={reportFileName(selectedReport, "pages")} exportContext={context} />
+      </>
+    )}
   </div>;
 }
 
@@ -332,7 +310,7 @@ function SourceDbLineageTab({ workspace, selectedReport, query, gatewaySourcesEn
   gatewaySourcesEnabled: boolean;
   onGatewaySourcesChange: (value: boolean) => void;
 }) {
-  // The workspace and report are the export's context columns, so they are not repeated per row.
+  const [searchTerm, setSearchTerm] = useState("");
   const rows: ExplorerGridRow[] = (query.data?.rows ?? []).map((row, index) => {
     const absent = absentSourceValue(row.source_object_type);
     return {
@@ -342,12 +320,17 @@ function SourceDbLineageTab({ workspace, selectedReport, query, gatewaySourcesEn
       database: row.source_database ?? absent,
       schema: row.source_schema ?? absent,
       dataSourceName: row.table_name ?? (row.source_object_type === "unknown" ? VALUE.notFound : VALUE.notAvailable),
-      // The hop is detail about how the row was reached, not what it is.
       reachedThrough: reachedThrough(row),
       reportId: row.report_id,
       semanticModelId: row.semantic_model_id,
     };
   });
+
+  const filteredRows = useMemo(() => {
+    if (!searchTerm.trim()) return rows;
+    const q = searchTerm.toLowerCase();
+    return rows.filter((row) => Object.values(row).some((val) => String(val ?? "").toLowerCase().includes(q)));
+  }, [rows, searchTerm]);
 
   const traceTargets: SnowflakeTraceTarget[] = useMemo(() => {
     const seen = new Map<string, SnowflakeTraceTarget>();
@@ -373,8 +356,9 @@ function SourceDbLineageTab({ workspace, selectedReport, query, gatewaySourcesEn
     {query.isError ? <EvidenceError error={query.error} fallback="Data sources need Fabric access to the selected report's semantic model." /> : null}
     {query.data && <>
       <ExplorerWarnings warnings={query.data.warnings} />
+      <TableSearchHeader searchTerm={searchTerm} onSearchChange={setSearchTerm} placeholder="Search data sources..." />
       <ExplorerGrid
-        rowData={rows}
+        rowData={filteredRows}
         columnDefs={[
           { field: "dataSourceType", headerName: COLUMN.dataSourceType, minWidth: 170 },
           { field: "databaseAccount", headerName: COLUMN.databaseAccount, minWidth: 200 },
@@ -394,14 +378,6 @@ function SourceDbLineageTab({ workspace, selectedReport, query, gatewaySourcesEn
   </div>;
 }
 
-/**
- * Semantic objects for whichever model(s) the selected report actually uses.
- * There is deliberately no model picker: the report's own binding is the
- * answer, and a picker could only list models in the current workspace, so a
- * report bound across workspaces would show an unrelated model's objects.
- * Rows are tagged with `semantic_model_id`, so however many models the
- * response covers, they render together in one grid.
- */
 function SemanticObjectsTab({ workspace, selectedReport, reportSemanticModel, modelNames, query, metadataQuery }: {
   workspace: Workspace | null;
   selectedReport: Report | null;
@@ -410,7 +386,15 @@ function SemanticObjectsTab({ workspace, selectedReport, reportSemanticModel, mo
   query: UseQueryResult<SemanticModelObjectsResponse, Error>;
   metadataQuery: UseQueryResult<MetadataResponse, Error>;
 }) {
+  const [searchTerm, setSearchTerm] = useState("");
   const rows = useMemo(() => semanticObjectRows(query.data, modelNames, reportSemanticModel), [query.data, modelNames, reportSemanticModel]);
+
+  const filteredRows = useMemo(() => {
+    if (!searchTerm.trim()) return rows;
+    const q = searchTerm.toLowerCase();
+    return rows.filter((row) => Object.values(row).some((val) => String(val ?? "").toLowerCase().includes(q)));
+  }, [rows, searchTerm]);
+
   const sourceRows = query.data?.rows ?? [];
   const modelCount = useMemo(() => new Set(sourceRows.map((row) => row.semantic_model_id)).size, [sourceRows]);
   const tableCount = useMemo(() => new Set(sourceRows.map((row) => `${row.semantic_model_id}:${row.semantic_table}`)).size, [sourceRows]);
@@ -428,8 +412,9 @@ function SemanticObjectsTab({ workspace, selectedReport, reportSemanticModel, mo
         <DetailItem label={LABEL.columns} value={String(rows.filter((row) => row.objectType === OBJECT_TYPE_LABELS.column || row.objectType === OBJECT_TYPE_LABELS.calculated_column).length)} />
         <DetailItem label={LABEL.measures} value={String(rows.filter((row) => row.objectType === OBJECT_TYPE_LABELS.measure).length)} />
       </div>
+      <TableSearchHeader searchTerm={searchTerm} onSearchChange={setSearchTerm} placeholder="Search semantic models, tables, or objects..." />
       <ExplorerGrid
-        rowData={rows}
+        rowData={filteredRows}
         columnDefs={[
           { field: "semanticModel", headerName: COLUMN.semanticModel, minWidth: 200 },
           { field: "semanticTable", headerName: COLUMN.semanticTable, minWidth: 190 },
@@ -453,13 +438,20 @@ function SemanticDbMappingTab({ workspace, selectedReport, semanticModelId, sema
   selectedReport: Report | null;
   semanticModelId: string | null;
   semanticModelName: string | null;
-  /** Where the bound model actually lives, which can differ from the report's workspace. */
   semanticModelWorkspaceId: string | null;
   query: UseQueryResult<ExplorerSnapshot, Error>;
   gatewaySourcesEnabled: boolean;
   onGatewaySourcesChange: (value: boolean) => void;
 }) {
+  const [searchTerm, setSearchTerm] = useState("");
   const rows = useMemo(() => (query.data ? semanticDbMappingRows(query.data, semanticModelName) : []), [query.data, semanticModelName]);
+
+  const filteredRows = useMemo(() => {
+    if (!searchTerm.trim()) return rows;
+    const q = searchTerm.toLowerCase();
+    return rows.filter((row) => Object.values(row).some((val) => String(val ?? "").toLowerCase().includes(q)));
+  }, [rows, searchTerm]);
+
   const columnTargets: SnowflakeColumnTarget[] = useMemo(() => {
     const byTable = new Map<string, Set<string>>();
     rows.forEach((row) => {
@@ -490,6 +482,7 @@ function SemanticDbMappingTab({ workspace, selectedReport, semanticModelId, sema
       })),
     [rows],
   );
+
   return <div className="space-y-6">
     <SectionHeading icon={<Database className="size-5" />} title={SECTION_HEADING["semantic-db-mapping"]} text="Every semantic object next to the database columns and database tables it reads. A column maps through the database column it loads from; measures and calculated columns map through the columns their DAX reads." />
     <EvidenceOptionToggle
@@ -503,8 +496,9 @@ function SemanticDbMappingTab({ workspace, selectedReport, semanticModelId, sema
     {query.isError ? <EvidenceError error={query.error} fallback="The database mapping needs Fabric access to the selected report's semantic model." /> : null}
     {query.data && <>
       <ExplorerWarnings warnings={query.data.warnings} />
+      <TableSearchHeader searchTerm={searchTerm} onSearchChange={setSearchTerm} placeholder="Search database tables, columns, or mappings..." />
       <ExplorerGrid
-        rowData={rows}
+        rowData={filteredRows}
         columnDefs={[
           { field: "semanticTable", headerName: COLUMN.semanticTable, minWidth: 170 },
           { field: "objectName", headerName: COLUMN.objectName, minWidth: 200, flex: 1 },
@@ -549,6 +543,7 @@ function ReportSemanticTab({ workspace, selectedReport, reportSemanticModel, nor
   normalizedQuery: UseQueryResult<NormalizedReport, Error>;
   visualSourcesQuery: UseQueryResult<ReportVisualSourceColumnsResponse, Error>;
 }) {
+  const [searchTerm, setSearchTerm] = useState("");
   const result = visualSourcesQuery.data;
   const fieldRows: ExplorerGridRow[] = (result?.rows ?? []).map((row, index) => {
     const objectType = row.semantic_object_type ? objectTypeLabel(row.semantic_object_type) : row.semantic_object_name ? VALUE.notAvailable : VALUE.notFound;
@@ -564,10 +559,16 @@ function ReportSemanticTab({ workspace, selectedReport, reportSemanticModel, nor
       databaseTables: joinNames(row.source_tables),
     };
   });
+
+  const filteredRows = useMemo(() => {
+    if (!searchTerm.trim()) return fieldRows;
+    const q = searchTerm.toLowerCase();
+    return fieldRows.filter((row) => Object.values(row).some((val) => String(val ?? "").toLowerCase().includes(q)));
+  }, [fieldRows, searchTerm]);
+
   const semanticModel = result?.semantic_model_id && result.semantic_model_name
     ? { id: result.semantic_model_id, name: result.semantic_model_name }
     : reportSemanticModel;
-  // The response names the workspace and report it actually traced; prefer those for the export's context.
   const exportContext = makeExportContext(
     result ? { id: result.workspace_id, name: result.workspace_name } : workspace,
     result ? { id: result.report_id, name: result.report_name } : selectedReport,
@@ -584,8 +585,9 @@ function ReportSemanticTab({ workspace, selectedReport, reportSemanticModel, nor
     {result && <>
       <ExplorerWarnings warnings={result.warnings} />
       <div className="grid border-y border-zinc-200 sm:grid-cols-4"><DetailItem label={LABEL.fieldsInVisuals} value={String(result.total_field_reference_count)} /><DetailItem label={LABEL.fullyTraced} value={String(result.resolved_count)} /><DetailItem label={LABEL.partlyTraced} value={String(result.partial_count)} /><DetailItem label={LABEL.notTraced} value={String(result.unresolved_count)} /></div>
+      <TableSearchHeader searchTerm={searchTerm} onSearchChange={setSearchTerm} placeholder="Search visual names, types, or fields..." />
       <ExplorerGrid
-        rowData={fieldRows}
+        rowData={filteredRows}
         columnDefs={[
           { field: "pageName", headerName: COLUMN.pageName, minWidth: 160 },
           { field: "visualName", headerName: COLUMN.visualName, minWidth: 190, flex: 1 },
@@ -606,10 +608,6 @@ function ReportSemanticTab({ workspace, selectedReport, reportSemanticModel, nor
 
 function MetadataSummary({ query, modelName }: { query: UseQueryResult<MetadataResponse, Error>; modelName: string | null }) {
   if (query.isLoading) return <ExplorerLoading label="Running the live model check" compact />;
-  // The reconciled metadata route needs a live XMLA/MSOLAP connection, which
-  // only exists on a Windows deployment. `/health/ready` reports no platform
-  // capability, so there is nothing to feature-gate on up front — the call is
-  // made and a failure degrades to this note instead of a hard error.
   if (query.isError) return <div className="mt-6 border border-zinc-200 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600"><p className="font-semibold text-zinc-700">{LABEL.liveModelCheck}</p><p className="mt-1">The live model check is not available here. It needs a live connection to the semantic model, which is only possible on a Windows deployment and for a capacity that allows it. Every object above is still read from the semantic model definition.</p></div>;
   if (!query.data) return null;
   const reconciliation = query.data.reconciliation;
@@ -619,7 +617,6 @@ function MetadataSummary({ query, modelName }: { query: UseQueryResult<MetadataR
   </div>;
 }
 
-/** One row per semantic object, tagged with the model it belongs to so several models can share one grid. */
 function semanticObjectRows(response: SemanticModelObjectsResponse | undefined, modelNames: Map<string, string> | undefined, boundModel: { id: string; name: string } | null): ExplorerGridRow[] {
   if (!response) return [];
   return response.rows.map((row, index) => ({
@@ -634,16 +631,6 @@ function semanticObjectRows(response: SemanticModelObjectsResponse | undefined, 
   }));
 }
 
-/**
- * Joins the three snapshot datasets into one row per semantic object.
- *
- * A plain column declares its database column directly in TMDL. A measure or
- * calculated column does not — its physical columns are only knowable by
- * following its DAX dependencies, which is what `measure_source_lineage`
- * already did, so those are read from there and listed together. The fully
- * qualified table falls back to the semantic table's own physical source when
- * an object has no traced dependency of its own.
- */
 function semanticDbMappingRows(snapshot: ExplorerSnapshot, semanticModelName: string | null): ExplorerGridRow[] {
   const traced = new Map<string, { columns: Set<string>; qualified: Set<string> }>();
   snapshot.measure_source_lineage.rows.forEach((row) => {
@@ -683,16 +670,13 @@ function semanticDbMappingRows(snapshot: ExplorerSnapshot, semanticModelName: st
   });
 }
 
-/** The three standard "missing" values; never offered as a name to trace. */
 const MISSING_VALUES = new Set<string>([VALUE.notAvailable, VALUE.notFound, VALUE.notApplicable]);
 
-/** Splits a joined cell back into names, dropping a missing-value placeholder rather than offering it as a name. */
 function splitNames(value: ExportValue): string[] {
   const text = typeof value === "string" ? value : "";
   return text.split(",").map((part) => part.trim()).filter((part) => part && !MISSING_VALUES.has(part));
 }
 
-/** Database columns or tables, joined; "Not found" when the trace reached none. */
 function joinNames(values: string[]) {
   return values.length ? values.join(", ") : VALUE.notFound;
 }
@@ -703,24 +687,14 @@ function normalizedObjectType(raw: string) {
 
 const CALCULATED_OBJECT_TYPES = new Set(["measure", "calculated_column", "calculated_table"]);
 
-/** Only a plain column loads from a database column; for every other object type there is none to show. */
 function missingDatabaseColumn(objectType: string) {
   return normalizedObjectType(objectType) === "column" ? VALUE.notAvailable : VALUE.notApplicable;
 }
 
-/** A calculation always has DAX, so a missing one was not provided; a plain column or hierarchy never has any. */
 function missingDaxExpression(objectType: string) {
   return CALCULATED_OBJECT_TYPES.has(normalizedObjectType(objectType)) ? VALUE.notAvailable : VALUE.notApplicable;
 }
 
-/**
- * Short, readable classification of where a table's data actually comes from.
- *
- * A composite-model table is no longer a category here. The backend now
- * follows the link into the other workspace and reports the real database, so
- * such a row is an ordinary database row; that it arrived via another model is
- * shown separately, under Reached through.
- */
 function dataSourceType(objectType: string): string {
   switch (objectType) {
     case "table": return "Database table";
@@ -734,17 +708,11 @@ function dataSourceType(objectType: string): string {
   }
 }
 
-/** "Workspace › Semantic model › Semantic table" for a composite-model hop; "Directly" when there is none. */
 function reachedThrough(row: ReportSourceTableRow): string {
   if (!row.via_workspace_name) return VALUE.directly;
   return [row.via_workspace_name, row.via_semantic_model_name ?? VALUE.notAvailable, row.via_semantic_table].filter(Boolean).join(" › ");
 }
 
-/**
- * Account/database/schema do not exist for file, URL and endpoint rows, and
- * could not be traced for unknown ones — say which, rather than rendering a
- * row of identical blanks.
- */
 function absentSourceValue(objectType: string): string {
   if (objectType === "unknown") return VALUE.notFound;
   if (objectType === "file" || objectType === "url" || objectType === "endpoint") return VALUE.notApplicable;

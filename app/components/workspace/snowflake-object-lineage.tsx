@@ -267,7 +267,15 @@ function SnowflakeTraceOutcome({ result, error, diagram }: { result: SnowflakeTr
                   <td className="border-b border-zinc-100 px-3 py-2 text-xs">{objectLevelLabel(dependency.target.object_domain)}</td>
                   <td className="border-b border-zinc-100 px-3 py-2 text-xs">{dependency.dependency_type}</td>
                   <td className="border-b border-zinc-100 px-3 py-2 text-xs">{dependency.distance ?? VALUE.notAvailable}</td>
-                  <td className="border-b border-zinc-100 px-3 py-2 text-xs">{processSummary(dependency.process)}</td>
+                  <td className="border-b border-zinc-100 px-3 py-2 text-xs">
+                    {processSummary(
+                      dependency.process || 
+                      (dependency as any).COLUMN_TRANSFORMATION || 
+                      (dependency as any).column_transformation || 
+                      (dependency as any).MODIFICATION_SQL || 
+                      (dependency as any).modification_sql
+                    )}
+                </td>
                 </tr>)}
               </tbody>
             </table>

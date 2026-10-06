@@ -213,6 +213,7 @@ export type InventoryEntry = {
   tableName: string;
   measureName?: string;
   hasExpression: boolean;
+  expression?: string | null;
 };
 
 export type SkippedModel = { workspaceId: string; workspaceName: string; semanticModelId: string; semanticModelName: string };
@@ -264,9 +265,9 @@ export async function fetchEstateInventory(apiOrigin: string, workspaces: Array<
     }
     parsedByModel.set(modelKey(ref.workspaceId, ref.semanticModelId), result.value);
     result.value.tables.forEach((table) => {
-      tables.push({ key: `${ref.workspaceId}:${ref.semanticModelId}:${table.name}`, workspaceId: ref.workspaceId, workspaceName: ref.workspaceName, semanticModelId: ref.semanticModelId, semanticModelName: ref.semanticModelName, tableName: table.name, hasExpression: Boolean(table.expression) });
+      tables.push({ key: `${ref.workspaceId}:${ref.semanticModelId}:${table.name}`, workspaceId: ref.workspaceId, workspaceName: ref.workspaceName, semanticModelId: ref.semanticModelId, semanticModelName: ref.semanticModelName, tableName: table.name, hasExpression: Boolean(table.expression), expression: table.expression ?? null });
       table.measures.forEach((measure) => {
-        measures.push({ key: `${ref.workspaceId}:${ref.semanticModelId}:${table.name}:${measure.name}`, workspaceId: ref.workspaceId, workspaceName: ref.workspaceName, semanticModelId: ref.semanticModelId, semanticModelName: ref.semanticModelName, tableName: table.name, measureName: measure.name, hasExpression: true });
+        measures.push({ key: `${ref.workspaceId}:${ref.semanticModelId}:${table.name}:${measure.name}`, workspaceId: ref.workspaceId, workspaceName: ref.workspaceName, semanticModelId: ref.semanticModelId, semanticModelName: ref.semanticModelName, tableName: table.name, measureName: measure.name, hasExpression: Boolean(measure.expression), expression: measure.expression ?? null });
       });
     });
   });

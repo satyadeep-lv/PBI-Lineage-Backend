@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 
+import { TableSearchHeader } from "~/components/ui/table-search-header";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { PowerBiAuthRequired } from "~/components/workspace/auth-required";
@@ -151,9 +152,7 @@ export function Explorer() {
   const reportSemanticModel = selectedReport?.dataset_id
     ? semanticModels.find((model) => model.id === selectedReport.dataset_id) ?? null
     : null;
-  // Explorer resolves the report's model from the workspace it was picked in;
-  // `dataset_workspace_id` is the only reliable proof when that model actually
-  // lives somewhere else.
+
   const binding: ReportBinding | null = selectedWorkspace && selectedReport
     ? {
         workspace: selectedWorkspace,
@@ -232,6 +231,9 @@ function WorkspaceContentTab({ workspace, reports, semanticModels, isLoading, er
   onReportSelect: (id: string) => void;
   onSemanticModelSelect: (id: string) => void;
 }) {
+  const [reportsSearch, setReportsSearch] = useState("");
+  const [modelsSearch, setModelsSearch] = useState("");
+
   const modelNames = new Map(semanticModels.map((model) => [model.id, model.name]));
   const reportRows: ExplorerGridRow[] = reports.map((report) => ({
     id: report.id,
@@ -242,6 +244,7 @@ function WorkspaceContentTab({ workspace, reports, semanticModels, isLoading, er
     format: reportFormatLabel(report.format),
     ownedByYou: yesNo(report.is_owned_by_me),
   }));
+
   const modelRows: ExplorerGridRow[] = semanticModels.map((model) => ({
     id: model.id,
     semanticModelId: model.id,
@@ -250,11 +253,33 @@ function WorkspaceContentTab({ workspace, reports, semanticModels, isLoading, er
     refresh: yesNo(model.is_refreshable),
     gateway: yesNo(model.is_on_prem_gateway_required),
   }));
+
+  const filteredReportRows = useMemo(() => {
+    if (!reportsSearch.trim()) return reportRows;
+    const q = reportsSearch.toLowerCase();
+    return reportRows.filter((row) => Object.values(row).some((val) => String(val ?? "").toLowerCase().includes(q)));
+  }, [reportRows, reportsSearch]);
+
+  const filteredModelRows = useMemo(() => {
+    if (!modelsSearch.trim()) return modelRows;
+    const q = modelsSearch.toLowerCase();
+    return modelRows.filter((row) => Object.values(row).some((val) => String(val ?? "").toLowerCase().includes(q)));
+  }, [modelRows, modelsSearch]);
+
   if (isLoading) return <ExplorerLoading label="Loading reports and semantic models" />;
   if (error) return <ExplorerError text="The reports and semantic models for this workspace could not be loaded." />;
+
   return <div className="space-y-8">
-    <div><SectionHeading icon={<Files className="size-5" />} title="Reports" text="Select a report to see its pages, data sources, semantic objects, and visual fields. Report format is how the report file is stored: PBIR, PBIR (legacy), or PBIX." /><ExplorerGrid rowData={reportRows} columnDefs={[{ field: "name", headerName: COLUMN.reportName, minWidth: 230, flex: 1.4 }, { field: "type", headerName: COLUMN.reportType, minWidth: 150 }, { field: "semanticModel", headerName: COLUMN.semanticModel, minWidth: 220, flex: 1.2 }, { field: "format", headerName: COLUMN.reportFormat, minWidth: 140 }, { field: "ownedByYou", headerName: COLUMN.ownedByYou, minWidth: 140 }, exportOnlyColumn<ExplorerGridRow>("reportId", COLUMN.reportId)]} onRowClick={(row) => onReportSelect(row.id)} emptyMessage="No reports were returned for this workspace." exportFileName={explorerFileName(workspace?.name, "reports")} exportContext={makeExportContext(workspace)} /></div>
-    <div><SectionHeading icon={<Layers3 className="size-5" />} title="Semantic models" text="Select a semantic model to see its semantic objects through a report connected to it." /><ExplorerGrid rowData={modelRows} columnDefs={[{ field: "name", headerName: COLUMN.semanticModel, minWidth: 260, flex: 1.5 }, { field: "storage", headerName: COLUMN.storageMode, minWidth: 160 }, { field: "refresh", headerName: COLUMN.refreshEnabled, minWidth: 160 }, { field: "gateway", headerName: COLUMN.gatewayRequired, minWidth: 170 }, exportOnlyColumn<ExplorerGridRow>("semanticModelId", COLUMN.semanticModelId)]} onRowClick={(row) => onSemanticModelSelect(row.id)} emptyMessage="No semantic models were returned for this workspace." exportFileName={explorerFileName(workspace?.name, "semantic-models")} exportContext={makeExportContext(workspace)} /></div>
+    <div>
+      <SectionHeading icon={<Files className="size-5" />} title="Reports" text="Select a report to see its pages, data sources, semantic objects, and visual fields. Report format is how the report file is stored: PBIR, PBIR (legacy), or PBIX." />
+      <TableSearchHeader searchTerm={reportsSearch} onSearchChange={setReportsSearch} placeholder="Search reports or formats..." />
+      <ExplorerGrid rowData={filteredReportRows} columnDefs={[{ field: "name", headerName: COLUMN.reportName, minWidth: 230, flex: 1.4 }, { field: "type", headerName: COLUMN.reportType, minWidth: 150 }, { field: "semanticModel", headerName: COLUMN.semanticModel, minWidth: 220, flex: 1.2 }, { field: "format", headerName: COLUMN.reportFormat, minWidth: 140 }, { field: "ownedByYou", headerName: COLUMN.ownedByYou, minWidth: 140 }, exportOnlyColumn<ExplorerGridRow>("reportId", COLUMN.reportId)]} onRowClick={(row) => onReportSelect(row.id)} emptyMessage="No reports were returned for this workspace." exportFileName={explorerFileName(workspace?.name, "reports")} exportContext={makeExportContext(workspace)} />
+    </div>
+    <div>
+      <SectionHeading icon={<Layers3 className="size-5" />} title="Semantic models" text="Select a semantic model to see its semantic objects through a report connected to it." />
+      <TableSearchHeader searchTerm={modelsSearch} onSearchChange={setModelsSearch} placeholder="Search semantic models or modes..." />
+      <ExplorerGrid rowData={filteredModelRows} columnDefs={[{ field: "name", headerName: COLUMN.semanticModel, minWidth: 260, flex: 1.5 }, { field: "storage", headerName: COLUMN.storageMode, minWidth: 160 }, { field: "refresh", headerName: COLUMN.refreshEnabled, minWidth: 160 }, { field: "gateway", headerName: COLUMN.gatewayRequired, minWidth: 170 }, exportOnlyColumn<ExplorerGridRow>("semanticModelId", COLUMN.semanticModelId)]} onRowClick={(row) => onSemanticModelSelect(row.id)} emptyMessage="No semantic models were returned for this workspace." exportFileName={explorerFileName(workspace?.name, "semantic-models")} exportContext={makeExportContext(workspace)} />
+    </div>
     <ScannerEvidencePanel workspace={workspace} scan={scan} />
   </div>;
 }
@@ -290,6 +315,9 @@ function ScannerEvidencePanel({ workspace, scan }: { workspace: Workspace | null
 }
 
 function ScannerEvidenceResults({ workspace, exportContext }: { workspace: ScannerWorkspace; exportContext: ExportContext }) {
+  const [dashboardsSearch, setDashboardsSearch] = useState("");
+  const [ownershipSearch, setOwnershipSearch] = useState("");
+
   const dashboardRows: ExplorerGridRow[] = (workspace.dashboards ?? []).map((dashboard) => ({
     id: dashboard.id,
     dashboardId: dashboard.id,
@@ -298,9 +326,9 @@ function ScannerEvidenceResults({ workspace, exportContext }: { workspace: Scann
     readOnly: yesNo(dashboard.isReadOnly),
     appId: dashboard.appId ?? EXPLORER_VALUE.notInAnApp,
   }));
+
   const appIds = Array.from(new Set([...(workspace.reports ?? []).map((report) => report.appId), ...(workspace.dashboards ?? []).map((dashboard) => dashboard.appId)].filter((id): id is string => Boolean(id))));
-  // One column per kind of owner: reports carry who created and last modified them,
-  // semantic models only who configured them.
+
   const ownershipRows: ExplorerGridRow[] = [
     ...(workspace.reports ?? []).map((report) => ({
       id: `report-${report.id}`,
@@ -322,10 +350,23 @@ function ScannerEvidenceResults({ workspace, exportContext }: { workspace: Scann
     })),
   ];
 
+  const filteredDashboardRows = useMemo(() => {
+    if (!dashboardsSearch.trim()) return dashboardRows;
+    const q = dashboardsSearch.toLowerCase();
+    return dashboardRows.filter((row) => Object.values(row).some((val) => String(val ?? "").toLowerCase().includes(q)));
+  }, [dashboardRows, dashboardsSearch]);
+
+  const filteredOwnershipRows = useMemo(() => {
+    if (!ownershipSearch.trim()) return ownershipRows;
+    const q = ownershipSearch.toLowerCase();
+    return ownershipRows.filter((row) => Object.values(row).some((val) => String(val ?? "").toLowerCase().includes(q)));
+  }, [ownershipRows, ownershipSearch]);
+
   return <div className="space-y-8">
     <div>
       <SectionHeading icon={<FileBarChart2 className="size-5" />} title="Dashboards" text="Every dashboard the metadata scan found in this workspace." />
-      <ExplorerGrid rowData={dashboardRows} columnDefs={[{ field: "name", headerName: COLUMN.dashboardName, minWidth: 230, flex: 1 }, { field: "tiles", headerName: COLUMN.dashboardTileCount, minWidth: 210 }, { field: "readOnly", headerName: COLUMN.readOnly, minWidth: 120 }, { field: "appId", headerName: COLUMN.appId, minWidth: 320, flex: 1 }, exportOnlyColumn<ExplorerGridRow>("dashboardId", COLUMN.dashboardId)]} emptyMessage="No dashboards were found in this workspace." exportFileName={explorerFileName(workspace.name, "dashboards")} exportContext={exportContext} />
+      <TableSearchHeader searchTerm={dashboardsSearch} onSearchChange={setDashboardsSearch} placeholder="Search dashboards or App IDs..." />
+      <ExplorerGrid rowData={filteredDashboardRows} columnDefs={[{ field: "name", headerName: COLUMN.dashboardName, minWidth: 230, flex: 1 }, { field: "tiles", headerName: COLUMN.dashboardTileCount, minWidth: 210 }, { field: "readOnly", headerName: COLUMN.readOnly, minWidth: 120 }, { field: "appId", headerName: COLUMN.appId, minWidth: 320, flex: 1 }, exportOnlyColumn<ExplorerGridRow>("dashboardId", COLUMN.dashboardId)]} emptyMessage="No dashboards were found in this workspace." exportFileName={explorerFileName(workspace.name, "dashboards")} exportContext={exportContext} />
     </div>
     <div>
       <SectionHeading icon={<Boxes className="size-5" />} title={LABEL.appsUsingWorkspace} text="Power BI apps that include this workspace's reports or dashboards, shown by App ID. The metadata scan does not return app names." />
@@ -335,7 +376,8 @@ function ScannerEvidenceResults({ workspace, exportContext }: { workspace: Scann
     </div>
     <div>
       <SectionHeading icon={<UsersRound className="size-5" />} title="Ownership" text="Who last modified and created each report, and who configured each semantic model." />
-      <ExplorerGrid rowData={ownershipRows} columnDefs={[{ field: "itemType", headerName: COLUMN.itemType, minWidth: 150 }, { field: "name", headerName: COLUMN.itemName, minWidth: 220, flex: 1 }, { field: "lastModifiedBy", headerName: COLUMN.lastModifiedBy, minWidth: 200, flex: 1 }, { field: "createdBy", headerName: COLUMN.createdBy, minWidth: 200, flex: 1 }, { field: "configuredBy", headerName: COLUMN.configuredBy, minWidth: 200, flex: 1 }, exportOnlyColumn<ExplorerGridRow>("itemId", COLUMN.itemId)]} emptyMessage="No reports or semantic models were found in this workspace." exportFileName={explorerFileName(workspace.name, "owners")} exportContext={exportContext} />
+      <TableSearchHeader searchTerm={ownershipSearch} onSearchChange={setOwnershipSearch} placeholder="Search owners or item names..." />
+      <ExplorerGrid rowData={filteredOwnershipRows} columnDefs={[{ field: "itemType", headerName: COLUMN.itemType, minWidth: 150 }, { field: "name", headerName: COLUMN.itemName, minWidth: 220, flex: 1 }, { field: "lastModifiedBy", headerName: COLUMN.lastModifiedBy, minWidth: 200, flex: 1 }, { field: "createdBy", headerName: COLUMN.createdBy, minWidth: 200, flex: 1 }, { field: "configuredBy", headerName: COLUMN.configuredBy, minWidth: 200, flex: 1 }, exportOnlyColumn<ExplorerGridRow>("itemId", COLUMN.itemId)]} emptyMessage="No reports or semantic models were found in this workspace." exportFileName={explorerFileName(workspace.name, "owners")} exportContext={exportContext} />
     </div>
   </div>;
 }

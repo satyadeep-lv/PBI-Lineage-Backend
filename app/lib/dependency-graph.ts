@@ -1,6 +1,6 @@
 import type { LineageGraph, LineageGraphEdge, LineageGraphNode, LineageNodeKind } from "~/components/workspace/lineage/lineage-types";
 
-export type DaxReference = { object_type: string; table_name?: string | null; object_name: string; qualified_name: string };
+export type DaxReference = { object_type: string; table_name?: string | null; object_name: string; qualified_name: string; expression?: string | null };
 export type DaxDependency = { source: DaxReference; target: DaxReference; reference_text: string };
 
 export type ClosureHop = {
