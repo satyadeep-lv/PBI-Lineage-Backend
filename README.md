@@ -870,6 +870,44 @@ can be read, so the response carries only a `FABRIC_SESSION_REQUIRED` warning.
 - A report or model definition that cannot be read degrades to warnings and
   unresolved rows; only the workspace and report are hard requirements.
 
+### Apps and Audiences
+
+```text
+GET /api/v1/apps/{app_id}?audience_history_days=0&include_object_access=true
+GET /api/v1/workspaces/{workspace_id}/org-apps/{org_app_id}?include_member_access=true&include_object_access=true
+```
+
+One response shape (`AppAccessResponse`) for both kinds of Power BI app: app
+metadata, `app_users` (everyone with app access), `workspace_members` (who
+see every audience), `audiences` (members and the content each one shows or
+hides), and `objects` (each report/dashboard/item with its own access list).
+`coverage` says per section whether it is `complete`, `partial`,
+`unavailable`, `not_requested` or `not_supported`, and `warnings` say why.
+The Scanner API is not used. Both routes honour `X-Lineage-Admin-Key`.
+
+- **Workspace apps** (`/apps/{app_id}`, Power BI session). Admin APIs supply
+  the app, its content (`GetReportsAsAdmin`/`GetDashboardsAsAdmin` filtered
+  on `appId`), `GetAppUsersAsAdmin`, and per-object users. Power BI exposes
+  **no API for workspace-app audiences**: `audience_history_days` (1-28)
+  rebuilds names and members from `CreateApp`/`UpdateApp` activity events,
+  which record only the audiences each event changed. Per-audience content is
+  never available (`not_supported`). Without admin rights the route falls
+  back to the caller's installed-app view.
+- **Org apps** (`/workspaces/{ws}/org-apps/{id}`, Fabric session). Audiences
+  are items: each `OrgAppAudience` definition gives `parentAppId` (matched to
+  the app's logical ID) and which elements it shows. Members, app users and
+  item access come from Fabric admin "List Item Access Details" (preview);
+  reading an audience's members that way is inferred from Microsoft's docs,
+  not stated by them, and is flagged in a warning.
+
+Admin sections need a Fabric administrator with `Tenant.Read.All` or a
+service principal allowed to call read-only admin APIs. The delegated
+sign-in does not request `Tenant.Read.All`, so interactive users get those
+sections as `unavailable`; the first refusal stops further admin calls so the
+200-calls/hour quota is not spent on known refusals. Definition reads need
+read *and* write permission on the item. Access lists contain names and
+email addresses.
+
 ### Session Cache
 
 ```text

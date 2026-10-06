@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     ai,
+    apps,
     auth,
     cache,
     explorer,
@@ -38,6 +39,18 @@ api_router.include_router(
     workspaces.router,
     prefix="/workspaces",
     tags=["Workspaces"],
+)
+
+api_router.include_router(
+    apps.router,
+    prefix="/apps",
+    tags=["Apps"],
+)
+
+api_router.include_router(
+    apps.org_app_router,
+    prefix="/workspaces",
+    tags=["Apps"],
 )
 
 api_router.include_router(
